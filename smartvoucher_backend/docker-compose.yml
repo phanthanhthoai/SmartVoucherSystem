@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # 1. Dịch vụ Cơ sở dữ liệu MySQL
+  db:
+    image: mysql:8.0
+    container_name: smartvoucher_mysql
+    restart: always
+    # Nạp file .env để MySQL tự cấu hình tên DB và mật khẩu root ban đầu
+    env_file:
+      - .env
+    environment:
+      # MySQL cần biến gốc MYSQL_ROOT_PASSWORD, ta lấy giá trị từ DB_PASSWORD trong .env
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  # 2. Dịch vụ Ứng dụng Django
+  web:
+    build: .
+    container_name: smartvoucher_django
+    restart: always
+    # Tự động chạy lệnh tạo bảng (migrate) rồi mới bật server
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+    # Đồng bộ code từ máy tính vào container để sửa code đến đâu cập nhật đến đó
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    # Nạp toàn bộ file .env vào ứng dụng Django
+    env_file:
+      - .env
+    depends_on:
+      - db
+
+volumes:
+  mysql_data:
