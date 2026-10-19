@@ -37,7 +37,7 @@ load_dotenv(BASE_DIR / ".env")
 SECRET_KEY = env("DJANGO_SECRET_KEY", "django-insecure-change-me-before-production")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env_bool("DJANGO_DEBUG", True)
+DEBUG = env_bool("DJANGO_DEBUG", False)
 
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", ["127.0.0.1", "localhost"])
 
@@ -77,7 +77,7 @@ MIDDLEWARE = [
 ]
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", True) 
+CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", False)
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
     [
@@ -95,7 +95,7 @@ DATABASES = {
         'NAME': env('DB_NAME', 'smartvoucher'),
         'USER': env('DB_USER', 'root'),
         'PASSWORD': env('DB_PASSWORD', '123456'),
-        'HOST': env('DB_HOST', 'db'),  # 'db' là tên container MySQL khi chạy Docker
+        'HOST': env('DB_HOST', 'db'),
         'PORT': env('DB_PORT', '3306'),
     }
 }
@@ -106,6 +106,31 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
+
+# Use a shared Redis cache in production by setting CACHE_BACKEND/LOCATION.
+# The local-memory fallback keeps local development and automated tests simple.
+CACHES = {
+    "default": {
+        "BACKEND": env(
+            "CACHE_BACKEND",
+            "django.core.cache.backends.locmem.LocMemCache",
+        ),
+        "LOCATION": env("CACHE_LOCATION", "smartvoucher-default"),
+        "TIMEOUT": int(env("CACHE_TIMEOUT", "300")),
+    }
+}
+
+# Anti-abuse limits for voucher redemption.  Deployments using multiple web
+# workers should point CACHES to Redis/Upstash so these counters are shared.
+VOUCHER_REDEMPTION_WINDOW_SECONDS = int(
+    env("VOUCHER_REDEMPTION_WINDOW_SECONDS", "60")
+)
+VOUCHER_REDEMPTION_MAX_ATTEMPTS = int(
+    env("VOUCHER_REDEMPTION_MAX_ATTEMPTS", "5")
+)
+VOUCHER_MAX_USERS_PER_DEVICE = int(
+    env("VOUCHER_MAX_USERS_PER_DEVICE", "3")
+)
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=5),
@@ -119,9 +144,14 @@ EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = env("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(env("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", True)
-EMAIL_HOST_USER = env("EMAIL_HOST_USER", "phanthanhthoai007@gmail.com")
-EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", "wszk lpom wjcv viyk")
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+
+# Optional endpoint used to notify a marketing/CRM system after a voucher is
+# assigned. Keep it empty unless the receiving endpoint is configured.
+VOUCHER_WEBHOOK_URL = env("VOUCHER_WEBHOOK_URL", "")
+VOUCHER_WEBHOOK_TIMEOUT_SECONDS = int(env("VOUCHER_WEBHOOK_TIMEOUT_SECONDS", "5"))
 
 ROOT_URLCONF = 'smartvoucher.urls'
 

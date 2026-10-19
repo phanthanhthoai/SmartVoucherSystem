@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import VoucherForm from "@/components/admin/vouchers/VoucherForm"
+import VoucherForm from "@/components/admin/vouchers/VoucherForm1"
 import { voucherApi } from "@/services/apiService"
 import type { Voucher } from "@/types/voucher"
 import { ArrowLeft, AlertCircle } from "lucide-react"

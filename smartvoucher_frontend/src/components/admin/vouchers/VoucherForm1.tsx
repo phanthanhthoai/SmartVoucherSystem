@@ -21,7 +21,7 @@ import { Calendar } from "@/components/ui/calendar"
 import type { Voucher } from "@/types/voucher"
 import { voucherApi } from "@/services/apiService"
 import { toast } from "sonner"
-import { addDays, getNowInVietnam, getStartOfTodayInVietnam, toVietnamFormDate, toVietnamISOString } from "@/utils/dateTime"
+import { addDays, getNowInVietnam, getStartOfTodayInVietnam, toVietnamFormDate } from "@/utils/dateTime"
 
 // 1. CẬP NHẬT SCHEMA THÊM CÁC TRƯỜNG ĐIỀU KIỆN TÍCH LŨY
 const formSchema = z.object({
@@ -210,16 +210,6 @@ const DateTimePickerFields = ({
     </div>
   );
 };
-
-function toVietnamDatetimeLocal(date = new Date()) {
-  const vn = new Date(date.toLocaleString("en-US", {
-    timeZone: "Asia/Ho_Chi_Minh"
-  }));
-
-  const pad = (n: number) => String(n).padStart(2, "0");
-
-  return `${vn.getFullYear()}-${pad(vn.getMonth() + 1)}-${pad(vn.getDate())}T${pad(vn.getHours())}:${pad(vn.getMinutes())}`;
-}
 
 export default function VoucherForm({ initialData, isEdit = false }: VoucherFormProps) {
   const navigate = useNavigate()

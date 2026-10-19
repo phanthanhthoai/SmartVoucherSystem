@@ -17,6 +17,7 @@ from .views import (
     VoucherListAPIView,
     VoucherRecipientDeleteAPIView,
     CheckoutAPIView,
+    ConfirmOrderAPIView,
 )
 
 urlpatterns = [
@@ -37,4 +38,5 @@ urlpatterns = [
     path("stats/top-vouchers/", TopVouchersAPIView.as_view()),
     path("apply/", ApplyVoucherAPIView.as_view()),
     path("checkout/", CheckoutAPIView.as_view()),
+    path("orders/<int:order_id>/confirm/",ConfirmOrderAPIView.as_view(),name="confirm-order",),
 ]

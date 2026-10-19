@@ -3,8 +3,8 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
 
 from orders.models import Order
-from vouchers.models import UserVoucher, Voucher, VoucherDistributionPlan
-from vouchers.services.notification import send_voucher_email
+from vouchers.models import UserVoucher, Voucher, VoucherDeliveryLog, VoucherDistributionPlan
+from vouchers.services.notification import send_voucher_email, send_voucher_webhook
 from vouchers.services.rule_engine import check_user_condition, check_accumulated_condition
 
 
@@ -16,21 +16,29 @@ def _filter_users_by_rule(users, rule):
     return eligible
 
 
-def assign_voucher_to_user(user, voucher):
+def assign_voucher_to_user(user, voucher, channels=None):
+    """Assign a voucher once, then deliver it through requested channels."""
+    channels = set(channels or [VoucherDeliveryLog.CHANNEL_EMAIL])
     _, created = UserVoucher.objects.get_or_create(user=user, voucher=voucher)
     if created:
-        send_voucher_email(user, voucher)
+        if VoucherDeliveryLog.CHANNEL_EMAIL in channels:
+            send_voucher_email(user, voucher)
+        if VoucherDeliveryLog.CHANNEL_WEBHOOK in channels:
+            send_voucher_webhook(user, voucher)
     return created
 
 
-def distribute_voucher(voucher, users):
-    rule = voucher.rule
-    eligible_users = _filter_users_by_rule(users, rule)
+def distribute_voucher(voucher, users, channels=None):
+    try:
+        rule = voucher.rule
+    except ObjectDoesNotExist:
+        rule = None
+    eligible_users = _filter_users_by_rule(users, rule) if rule else list(users)
 
     created = 0
     skipped = 0
     for user in eligible_users:
-        was_created = assign_voucher_to_user(user, voucher)
+        was_created = assign_voucher_to_user(user, voucher, channels=channels)
         if was_created:
             created += 1
         else:
@@ -41,9 +49,10 @@ def distribute_voucher(voucher, users):
 
 def get_target_users(user_ids=None):
     User = get_user_model()
+    users = User.objects.filter(is_active=True, role="customer")
     if user_ids:
-        return User.objects.filter(id__in=user_ids)
-    return User.objects.all()
+        return users.filter(id__in=user_ids)
+    return users
 
 
 def assign_welcome_vouchers_to_user(user):

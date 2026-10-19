@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 from .models import Voucher, UserVoucher, VoucherRule
 
@@ -49,6 +50,7 @@ class VoucherRuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = VoucherRule
         fields = [
+            "customer_group",
             "required_role",
             "birthday_only",
             "min_order_amount",
@@ -60,7 +62,32 @@ class VoucherRuleSerializer(serializers.ModelSerializer):
             "min_accumulated_orders",
             "target_month",
             "target_year",
+            "start_time",
+            "end_time",
+            "buy_quantity",
+            "get_quantity",
+            "get_product_type",
         ]
+
+    def validate(self, attrs):
+        start_time = attrs.get("start_time", getattr(self.instance, "start_time", None))
+        end_time = attrs.get("end_time", getattr(self.instance, "end_time", None))
+        if (start_time is None) != (end_time is None):
+            raise serializers.ValidationError(
+                "Cần cấu hình cả giờ bắt đầu và giờ kết thúc cho khung giờ vàng."
+            )
+
+        buy_quantity = attrs.get("buy_quantity", getattr(self.instance, "buy_quantity", None))
+        get_quantity = attrs.get("get_quantity", getattr(self.instance, "get_quantity", None))
+        if bool(buy_quantity) != bool(get_quantity):
+            raise serializers.ValidationError(
+                "Mua X tặng Y cần có cả số lượng mua và số lượng tặng."
+            )
+        if buy_quantity is not None and buy_quantity <= 0:
+            raise serializers.ValidationError({"buy_quantity": "Phải lớn hơn 0."})
+        if get_quantity is not None and get_quantity <= 0:
+            raise serializers.ValidationError({"get_quantity": "Phải lớn hơn 0."})
+        return attrs
 
 
 class CreateVoucherSerializer(serializers.ModelSerializer):
@@ -84,6 +111,22 @@ class CreateVoucherSerializer(serializers.ModelSerializer):
             "rule",
         ]
 
+    def validate(self, attrs):
+        if attrs["expiry_date"] <= attrs["release_date"]:
+            raise serializers.ValidationError({
+                "expiry_date": "Ngày hết hạn phải sau ngày phát hành."
+            })
+        if attrs["discount_type"] == "percent" and attrs["discount_value"] > 100:
+            raise serializers.ValidationError({
+                "discount_value": "Giảm theo phần trăm không được vượt quá 100%."
+            })
+        if attrs["discount_value"] <= 0:
+            raise serializers.ValidationError({
+                "discount_value": "Giá trị giảm phải lớn hơn 0."
+            })
+        return attrs
+
+    @transaction.atomic
     def create(self, validated_data):
         rule_data = validated_data.pop("rule")
         code = validated_data.get("code")

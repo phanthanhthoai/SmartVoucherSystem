@@ -32,9 +32,15 @@ class VoucherForUserAPI(APIView):
             {
                 "id": uv.voucher.id,
                 "code": uv.voucher.code,
+                "title": uv.voucher.title,
                 "type": uv.voucher.discount_type,
                 "value": uv.voucher.discount_value,
                 "max_discount_amount": uv.voucher.max_discount_amount,
+                "min_spend": (
+                    uv.voucher.rule.min_order_amount
+                    if hasattr(uv.voucher, "rule")
+                    else 0
+                ),
                 "is_used": uv.is_used,
                 "start_date": uv.voucher.release_date,
                 "expiry_date": uv.voucher.expiry_date,

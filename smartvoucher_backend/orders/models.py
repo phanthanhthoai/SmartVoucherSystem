@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models
 
 
@@ -16,14 +17,45 @@ class Order(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="orders"
+        related_name="orders",
     )
-    external_order_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
-    total_amount = models.FloatField(default=0)
+
+    external_order_id = models.CharField(
+        max_length=100,
+        unique=True,
+        null=True,
+        blank=True,
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+    )
+
+    total_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
-    applied_voucher = models.ForeignKey('vouchers.Voucher', on_delete=models.SET_NULL, null=True, blank=True)
-    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    applied_voucher = models.ForeignKey(
+        "vouchers.Voucher",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="applied_orders",
+    )
+
+    discount_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
 
     def __str__(self):
         return self.external_order_id or f"Order {self.id}"
@@ -33,12 +65,28 @@ class OrderItem(models.Model):
     order = models.ForeignKey(
         Order,
         on_delete=models.CASCADE,
-        related_name="items"
+        related_name="items",
     )
+
     name = models.CharField(max_length=255)
-    product_type = models.CharField(max_length=100, null=True, blank=True)
-    quantity = models.IntegerField(default=1)
-    unit_price = models.FloatField(default=0)
+
+    product_type = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+    )
+
+    quantity = models.PositiveIntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+    )
+
+    unit_price = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
 
     @property
     def line_total(self):
