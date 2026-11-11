@@ -111,3 +111,28 @@ class DiscountCalculatorTests(TestCase):
         # Hai sản phẩm beverage, mỗi sản phẩm 20:
         # 40 * 10% = 4.
         self.assertEqual(discount, Decimal("4.00"))
+
+    def test_fixed_discount_only_applies_to_required_product(self):
+        VoucherRule.objects.create(
+            voucher=self.voucher,
+            required_product_id=1,
+        )
+        self.order.items.filter(name="Product A").update(product_id=1)
+        self.order.items.filter(name="Product B").update(product_id=2)
+
+        discount = calculate_discount_amount(self.voucher, self.order)
+
+        self.assertEqual(discount, Decimal("6.00"))
+
+    def test_product_and_category_restrictions_both_apply(self):
+        VoucherRule.objects.create(
+            voucher=self.voucher,
+            required_product_type="food",
+            required_product_id=2,
+        )
+        self.order.items.filter(name="Product A").update(product_id=1)
+        self.order.items.filter(name="Product B").update(product_id=2)
+
+        discount = calculate_discount_amount(self.voucher, self.order)
+
+        self.assertEqual(discount, Decimal("0.00"))

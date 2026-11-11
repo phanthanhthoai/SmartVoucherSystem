@@ -11,7 +11,6 @@ import VoucherEditPage from './pages/Admin/Vouchers/VoucherEditPage'
 import VoucherDetailPage from './pages/Admin/Vouchers/VoucherDetailPage'
 import VoucherDeliveryLogPage from './pages/Admin/Vouchers/VoucherDeliveryLogPage'
 import CustomerListPage from './pages/Admin/Customers/CustomerListPage'
-import HomePage from './pages/Public/HomePage'
 import RegisterPage from './pages/Public/RegisterPage'
 import CustomerLoginPage from './pages/Public/CustomerLoginPage'
 import { useAuth } from './context/AuthContext'
@@ -19,6 +18,12 @@ import HomeAdminPage from './pages/Admin/Home/page'
 import ShopPage from './pages/User/HomePage'
 import CartPage from './pages/User/CartPage'
 import CheckoutPage from './pages/User/CheckoutPage'
+import CampaignsPage from './pages/Admin/Campaigns/CampaignsPage'
+import MyVouchersPage from './pages/User/MyVouchersPage'
+import MyOrdersPage from './pages/User/MyOrdersPage'
+import CheckoutSuccessPage from './pages/User/CheckoutSuccessPage'
+import ProductsPage from './pages/Admin/Products/ProductsPage'
+import OrdersPage from './pages/Admin/Orders/OrdersPage'
 
 function RequireAdminAuth() {
   const { user, loading } = useAuth();
@@ -40,6 +45,16 @@ function RequireAdminAuth() {
   return <Outlet />;
 }
 
+function RequireCustomerAuth() {
+  const { user, loading } = useAuth();
+  if (loading) {
+    return <div className="flex min-h-screen items-center justify-center text-slate-400">Đang kiểm tra đăng nhập...</div>;
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== 'customer') return <Navigate to="/admin" replace />;
+  return <Outlet />;
+}
+
 function AdminPlaceholderPage({ title }: { title: string }) {
   return (
     <div className="flex flex-col items-center justify-center p-8">
@@ -52,12 +67,17 @@ function AdminPlaceholderPage({ title }: { title: string }) {
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
+      <Route path="/" element={<ShopPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/login" element={<CustomerLoginPage />} />
       <Route path="/shop" element={<ShopPage />} />
       <Route path="/shop/cart" element={<CartPage />} />
       <Route path="/shop/checkout" element={<CheckoutPage />} />
+      <Route element={<RequireCustomerAuth />}>
+        <Route path="/vouchers" element={<MyVouchersPage />} />
+        <Route path="/shop/orders" element={<MyOrdersPage />} />
+        <Route path="/shop/success" element={<CheckoutSuccessPage />} />
+      </Route>
       <Route path="/admin/login" element={<LoginPage />} />
       <Route element={<RequireAdminAuth />}>
         <Route
@@ -66,6 +86,9 @@ function AppRoutes() {
         >
           <Route index element={<HomeAdminPage />} />
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="campaigns" element={<CampaignsPage />} />
+          <Route path="products" element={<ProductsPage />} />
+          <Route path="orders" element={<OrdersPage />} />
           <Route path="vouchers/list" element={<VoucherListPage />} />
           <Route path="vouchers/create" element={<VoucherCreatePage />} />
           <Route path="vouchers/:voucherId/edit" element={<VoucherEditPage />} />

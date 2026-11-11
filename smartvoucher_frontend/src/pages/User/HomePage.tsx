@@ -6,6 +6,7 @@ import {
     UserIcon,
     ChevronDown,
     Ticket,
+    ClipboardList,
     LayoutDashboard,
     LogOut,
     ShoppingCart,
@@ -19,31 +20,23 @@ import { useAuth } from '@/context/AuthContext'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useCart } from '@/context/CartContext'
 import { toast } from 'sonner'
+import { productApi } from '@/services/apiService'
 
-// --- MOCK DATA & TYPE ---
 type Product = {
     id: number
     name: string
     description: string
     price: number
-    product_type: 'candy' | 'drink'
+    product_type: string
     color: string
+    image: string | null
 }
 
-const mockProducts: Product[] = [
-    { id: 1, name: 'Kẹo Dẻo 123', description: 'Vị trái cây chua ngọt bùng nổ, dẻo mềm tan trong miệng.', price: 25000, product_type: 'candy', color: 'from-pink-500 to-rose-500' },
-    { id: 2, name: 'Trà Sữa 123', description: 'Trà đen đậm vị kết hợp trân châu đường đen trứ danh.', price: 45000, product_type: 'drink', color: 'from-amber-500 to-orange-600' },
-    { id: 3, name: 'Sô-cô-la 123', description: 'Đắng nhẹ, thơm nồng từ 85% cacao nguyên chất.', price: 65000, product_type: 'candy', color: 'from-slate-700 to-slate-900' },
-    { id: 4, name: 'Nước Tăng 123', description: 'Giải khát tức thì, nạp năng lượng cho ngày dài.', price: 30000, product_type: 'drink', color: 'from-cyan-400 to-blue-600' },
-    { id: 5, name: 'Kẹo Nổ 123', description: 'Trải nghiệm nổ lách tách cực vui nhộn khi ngậm.', price: 15000, product_type: 'candy', color: 'from-purple-500 to-indigo-500' },
-    { id: 6, name: 'Sinh Tố 123', description: 'Xoài, dâu tây và việt quất xay nhuyễn mát lạnh.', price: 55000, product_type: 'drink', color: 'from-emerald-400 to-teal-500' },
-    { id: 7, name: 'Kẹo Dẻo ABC', description: 'Vị trái cây chua ngọt bùng nổ, dẻo mềm tan trong miệng.', price: 25000, product_type: 'candy', color: 'from-pink-500 to-rose-500' },
-    { id: 8, name: 'Trà Sữa ABC', description: 'Trà đen đậm vị kết hợp trân châu đường đen trứ danh.', price: 45000, product_type: 'drink', color: 'from-amber-500 to-orange-600' },
-    { id: 9, name: 'Sô-cô-la ABC', description: 'Đắng nhẹ, thơm nồng từ 85% cacao nguyên chất.', price: 65000, product_type: 'candy', color: 'from-slate-700 to-slate-900' },
-    { id: 10, name: 'Nước Tăng ABC', description: 'Giải khát tức thì, nạp năng lượng cho ngày dài.', price: 30000, product_type: 'drink', color: 'from-cyan-400 to-blue-600' },
-    { id: 11, name: 'Kẹo Nổ ABC', description: 'Trải nghiệm nổ lách tách cực vui nhộn khi ngậm.', price: 15000, product_type: 'candy', color: 'from-purple-500 to-indigo-500' },
-    { id: 12, name: 'Sinh Tố ABC', description: 'Xoài, dâu tây và việt quất xay nhuyễn mát lạnh.', price: 55000, product_type: 'drink', color: 'from-emerald-400 to-teal-500' },
-]
+const productColor = (productType: string) => {
+    if (productType === 'candy') return 'from-pink-500 to-rose-500'
+    if (productType === 'drink') return 'from-amber-500 to-orange-600'
+    return 'from-cyan-500 to-indigo-600'
+}
 
 const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value)
@@ -56,7 +49,34 @@ export default function ShopPage() {
     
     const [isOpen, setIsOpen] = useState(false)
     const menuRef = useRef<HTMLDivElement>(null)
-    const [activeFilter, setActiveFilter] = useState<'all' | 'candy' | 'drink'>('all')
+    const [products, setProducts] = useState<Product[]>([])
+    const [productsLoading, setProductsLoading] = useState(true)
+    const [productsError, setProductsError] = useState('')
+    const [activeFilter, setActiveFilter] = useState('all')
+
+    useEffect(() => {
+        let isMounted = true
+        productApi.list()
+            .then((catalog) => {
+                if (!isMounted) return
+                setProducts(catalog.map((product) => ({
+                    id: product.id,
+                    name: product.name,
+                    description: product.description,
+                    price: Number(product.unit_price),
+                    product_type: product.product_type,
+                    color: productColor(product.product_type),
+                    image: product.image,
+                })))
+            })
+            .catch(() => {
+                if (isMounted) setProductsError('Không thể tải danh sách sản phẩm. Vui lòng thử tải lại trang.')
+            })
+            .finally(() => {
+                if (isMounted) setProductsLoading(false)
+            })
+        return () => { isMounted = false }
+    }, [])
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -76,12 +96,14 @@ export default function ShopPage() {
             price: product.price,
             // Chuyển ngôn ngữ Frontend sang Backend
             product_type: product.product_type,
-            color: product.color 
+            color: product.color,
+            image: product.image,
         });
         toast.success(`Đã thêm ${product.name} vào giỏ hàng!`)
     }
 
-    const filteredProducts = mockProducts.filter(p => activeFilter === 'all' ? true : p.product_type === activeFilter)
+    const categories = Array.from(new Set(products.map((product) => product.product_type)))
+    const filteredProducts = products.filter((product) => activeFilter === 'all' || product.product_type === activeFilter)
 
     return (
         <div className="relative min-h-screen w-full overflow-hidden bg-[#020617] text-white font-sans selection:bg-cyan-500/30 pb-20">
@@ -107,7 +129,7 @@ export default function ShopPage() {
                 <motion.header
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
-                    className="flex items-center justify-between py-10 sticky top-0 z-50 backdrop-blur-md bg-[#020617]/50"
+                    className="flex items-center justify-between py-4 sticky top-0 z-50 backdrop-blur-md bg-[#020617]/80"
                 >
                     {/* Logo */}
                     <Link to="/" className="flex items-center gap-3 group cursor-pointer">
@@ -126,10 +148,15 @@ export default function ShopPage() {
 
                     <div className="flex items-center gap-6">
                         {/* Giỏ hàng */}
-                        <div className="relative cursor-pointer group">
-                            <div className="p-2.5 bg-white/5 border border-white/10 rounded-full group-hover:bg-white/10 transition-colors" onClick={() => { if (cartCount > 0) navigate('/shop/cart') }}>
+                        <div className="relative group">
+                            <button
+                                type="button"
+                                aria-label={`Mở giỏ hàng, ${cartCount} sản phẩm`}
+                                onClick={() => navigate('/shop/cart')}
+                                className="p-2.5 bg-white/5 border border-white/10 rounded-full group-hover:bg-white/10 transition-colors"
+                            >
                                 <ShoppingCart className="w-5 h-5 text-slate-300 group-hover:text-cyan-400 transition-colors" />
-                            </div>
+                            </button>
                             {cartCount > 0 && (
                                 <motion.div
                                     initial={{ scale: 0 }}
@@ -188,9 +215,14 @@ export default function ShopPage() {
 
                                             <div className="py-2 text-slate-700">
                                                 {user.role === 'customer' ? (
-                                                    <Link to="/vouchers" onClick={() => setIsOpen(false)} className="flex items-center gap-3 px-5 py-3 text-sm font-semibold hover:bg-cyan-50 hover:text-cyan-600">
-                                                        <Ticket className="w-4 h-4" /> Ví Voucher của tôi
-                                                    </Link>
+                                                    <>
+                                                        <Link to="/vouchers" onClick={() => setIsOpen(false)} className="flex items-center gap-3 px-5 py-3 text-sm font-semibold hover:bg-cyan-50 hover:text-cyan-600">
+                                                            <Ticket className="w-4 h-4" /> Ví Voucher của tôi
+                                                        </Link>
+                                                        <Link to="/shop/orders" onClick={() => setIsOpen(false)} className="flex items-center gap-3 px-5 py-3 text-sm font-semibold hover:bg-cyan-50 hover:text-cyan-600">
+                                                            <ClipboardList className="w-4 h-4" /> Đơn hàng của tôi
+                                                        </Link>
+                                                    </>
                                                 ) : (
                                                     <Link to="/admin" onClick={() => setIsOpen(false)} className="flex items-center gap-3 px-5 py-3 text-sm font-semibold hover:bg-cyan-50 hover:text-cyan-600">
                                                         <LayoutDashboard className="w-4 h-4" /> Quản trị Admin
@@ -211,41 +243,58 @@ export default function ShopPage() {
                     </div>
                 </motion.header>
 
-                {/* Cửa hàng Hero */}
-                <section className="pt-10 pb-16 text-center max-w-2xl mx-auto">
-                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 mb-6">
-                        <Sparkles className="w-4 h-4" />
-                        <span className="text-xs font-bold uppercase tracking-widest">Sản phẩm tuyển chọn</span>
-                    </motion.div>
-                    <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="text-4xl md:text-6xl font-black tracking-tight mb-6">
-                        Khám phá hương vị <br /> <span className="bg-gradient-to-r from-cyan-400 to-indigo-500 bg-clip-text text-transparent italic">Đỉnh cao</span>
-                    </motion.h1>
+                <section className="pt-4 pb-6">
+                    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                            <p className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-cyan-400">
+                                <Sparkles className="h-4 w-4" />
+                                Cửa hàng SmartShop
+                            </p>
+                            <h1 className="text-3xl font-black tracking-tight sm:text-4xl">Sản phẩm</h1>
+                            <p className="mt-1 text-sm text-slate-400">Chọn sản phẩm yêu thích và thêm vào giỏ hàng.</p>
+                        </div>
+                        {!productsLoading && !productsError && (
+                            <p className="text-sm text-slate-400" aria-live="polite">
+                                {filteredProducts.length} sản phẩm
+                            </p>
+                        )}
+                    </div>
 
-                    {/* Bộ lọc Categories */}
-                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="flex justify-center gap-3 mt-10">
+                    {/* Bộ lọc danh mục */}
+                    <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex gap-2 overflow-x-auto pb-2"
+                        aria-label="Lọc sản phẩm theo danh mục"
+                    >
                         <button
                             onClick={() => setActiveFilter('all')}
-                            className={`px-6 py-2.5 rounded-full text-sm font-bold transition-all ${activeFilter === 'all' ? 'bg-white text-slate-900 shadow-lg scale-105' : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white border border-white/10'}`}
+                            aria-pressed={activeFilter === 'all'}
+                            className={`shrink-0 px-5 py-2 rounded-full text-sm font-bold transition-all ${activeFilter === 'all' ? 'bg-white text-slate-900 shadow-lg' : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white border border-white/10'}`}
                         >
                             Tất cả
                         </button>
-                        <button
-                            onClick={() => setActiveFilter('candy')}
-                            className={`flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold transition-all ${activeFilter === 'candy' ? 'bg-white text-slate-900 shadow-lg scale-105' : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white border border-white/10'}`}
-                        >
-                            <Candy className="w-4 h-4" /> Kẹo ngọt
-                        </button>
-                        <button
-                            onClick={() => setActiveFilter('drink')}
-                            className={`flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold transition-all ${activeFilter === 'drink' ? 'bg-white text-slate-900 shadow-lg scale-105' : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white border border-white/10'}`}
-                        >
-                            <Coffee className="w-4 h-4" /> Đồ uống
-                        </button>
+                        {categories.map((category) => (
+                            <button
+                                key={category}
+                                onClick={() => setActiveFilter(category)}
+                                aria-pressed={activeFilter === category}
+                                className={`flex shrink-0 items-center gap-2 px-5 py-2 rounded-full text-sm font-bold transition-all ${activeFilter === category ? 'bg-white text-slate-900 shadow-lg' : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white border border-white/10'}`}
+                            >
+                                {category === 'candy' ? <Candy className="w-4 h-4" /> : <Coffee className="w-4 h-4" />}
+                                {category === 'candy' ? 'Kẹo ngọt' : category === 'drink' ? 'Đồ uống' : category}
+                            </button>
+                        ))}
                     </motion.div>
                 </section>
 
                 {/* Lưới Sản phẩm */}
-                <motion.section layout className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <motion.section layout aria-label="Danh sách sản phẩm" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {productsLoading && <p className="col-span-full py-12 text-center text-slate-400">Đang tải sản phẩm...</p>}
+                    {productsError && <p role="alert" className="col-span-full py-12 text-center text-rose-300">{productsError}</p>}
+                    {!productsLoading && !productsError && filteredProducts.length === 0 && (
+                        <p className="col-span-full py-12 text-center text-slate-400">Hiện chưa có sản phẩm trong danh mục này.</p>
+                    )}
                     <AnimatePresence>
                         {filteredProducts.map((product) => (
                             <motion.div
@@ -259,7 +308,11 @@ export default function ShopPage() {
                             >
                                 {/* Ảnh Placeholder với Gradient */}
                                 <div className={`w-full h-48 rounded-2xl mb-6 bg-gradient-to-br ${product.color} flex items-center justify-center shadow-inner relative overflow-hidden group-hover:scale-[1.02] transition-transform duration-500`}>
-                                    {product.product_type === 'candy' ? <Candy className="w-16 h-16 text-white/50" /> : <Coffee className="w-16 h-16 text-white/50" />}
+                                    {product.image ? (
+                                        <img src={product.image} alt={product.name} className="h-full w-full object-cover" />
+                                    ) : (
+                                        product.product_type === 'candy' ? <Candy className="w-16 h-16 text-white/50" /> : <Coffee className="w-16 h-16 text-white/50" />
+                                    )}
 
                                     {/* Label loại sản phẩm */}
                                     <div className="absolute top-3 left-3 px-3 py-1 bg-black/30 backdrop-blur-md rounded-full border border-white/10 text-[10px] font-black uppercase tracking-wider text-white">

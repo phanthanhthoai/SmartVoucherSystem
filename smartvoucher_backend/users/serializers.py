@@ -1,4 +1,6 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 
@@ -9,6 +11,14 @@ class RegisterSerializer(serializers.Serializer):
     username = serializers.CharField()
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+
+    def validate_password(self, value):
+        user = User(username=self.initial_data.get("username", ""), email=self.initial_data.get("email", ""))
+        try:
+            validate_password(value, user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
+        return value
 
 
 class CreateGroupSerializer(serializers.Serializer):
@@ -61,11 +71,10 @@ class UpdateUserPermissionsSerializer(serializers.Serializer):
 class UserUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["username", "email", "phone", "points", "total_spent"]
+        fields = ["username", "email", "phone", "points"]
         extra_kwargs = {
             "username": {"required": False},
             "email": {"required": False},
             "phone": {"required": False, "allow_blank": True, "allow_null": True},
             "points": {"required": False},
-            "total_spent": {"required": False},
         }

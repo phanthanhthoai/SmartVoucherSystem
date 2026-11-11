@@ -1,6 +1,9 @@
 import React from "react"
 import {
   LayoutDashboard,
+  Megaphone,
+  ShoppingBag,
+  Package,
   Percent,
   UserCog,
   Users,
@@ -23,6 +26,21 @@ export const sidebarItems: SidebarItem[] = [
     title: "Thống kê",
     icon: <LayoutDashboard />,
     path: "/admin/dashboard",
+  },
+  {
+    title: "Đơn hàng",
+    icon: <ShoppingBag />,
+    path: "/admin/orders",
+  },
+  {
+    title: "Chiến dịch",
+    icon: <Megaphone />,
+    path: "/admin/campaigns",
+  },
+  {
+    title: "Sản phẩm",
+    icon: <Package />,
+    path: "/admin/products",
   },
   {
     title: "Voucher",

@@ -1,6 +1,9 @@
+import json
 import os
 from pathlib import Path
 from datetime import timedelta
+
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -33,11 +36,21 @@ def env_list(name, default=None):
 
 load_dotenv(BASE_DIR / ".env")
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = env("DJANGO_SECRET_KEY", "django-insecure-change-me-before-production")
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool("DJANGO_DEBUG", False)
+
+# A development-only fallback keeps test environments convenient. Production
+# requires a configured secret and rejects the documented example placeholder.
+SECRET_KEY = env("DJANGO_SECRET_KEY", "")
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY must be configured when DEBUG is disabled.")
+    SECRET_KEY = "django-insecure-local-development-only"
+if not DEBUG and (
+    SECRET_KEY.startswith("django-insecure-")
+    or SECRET_KEY.startswith("replace-with-")
+):
+    raise ImproperlyConfigured("Replace the example DJANGO_SECRET_KEY before production.")
 
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", ["127.0.0.1", "localhost"])
 
@@ -94,7 +107,7 @@ DATABASES = {
         'ENGINE': env('DB_ENGINE', 'django.db.backends.mysql'),
         'NAME': env('DB_NAME', 'smartvoucher'),
         'USER': env('DB_USER', 'root'),
-        'PASSWORD': env('DB_PASSWORD', '123456'),
+        'PASSWORD': env('DB_PASSWORD', ''),
         'HOST': env('DB_HOST', 'db'),
         'PORT': env('DB_PORT', '3306'),
     }
@@ -107,21 +120,19 @@ REST_FRAMEWORK = {
     ),
 }
 
-# Use a shared Redis cache in production by setting CACHE_BACKEND/LOCATION.
-# The local-memory fallback keeps local development and automated tests simple.
+# Use a shared Redis cache by default so rate limits are consistent across workers.
 CACHES = {
     "default": {
         "BACKEND": env(
             "CACHE_BACKEND",
-            "django.core.cache.backends.locmem.LocMemCache",
+            "django.core.cache.backends.redis.RedisCache",
         ),
-        "LOCATION": env("CACHE_LOCATION", "smartvoucher-default"),
+        "LOCATION": env("CACHE_LOCATION", "redis://127.0.0.1:6379/1"),
         "TIMEOUT": int(env("CACHE_TIMEOUT", "300")),
     }
 }
 
-# Anti-abuse limits for voucher redemption.  Deployments using multiple web
-# workers should point CACHES to Redis/Upstash so these counters are shared.
+# Anti-abuse limits for voucher redemption use the shared cache above.
 VOUCHER_REDEMPTION_WINDOW_SECONDS = int(
     env("VOUCHER_REDEMPTION_WINDOW_SECONDS", "60")
 )
@@ -152,6 +163,12 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
 # assigned. Keep it empty unless the receiving endpoint is configured.
 VOUCHER_WEBHOOK_URL = env("VOUCHER_WEBHOOK_URL", "")
 VOUCHER_WEBHOOK_TIMEOUT_SECONDS = int(env("VOUCHER_WEBHOOK_TIMEOUT_SECONDS", "5"))
+
+# Test/development catalog fixture. Production deployments should populate this
+# from their trusted catalog integration rather than accept prices from clients.
+PRODUCT_CATALOG = json.loads(env("PRODUCT_CATALOG_JSON", "{}"))
+if not isinstance(PRODUCT_CATALOG, dict):
+    raise ValueError("PRODUCT_CATALOG_JSON must be a JSON object keyed by product ID.")
 
 ROOT_URLCONF = 'smartvoucher.urls'
 
@@ -186,4 +203,6 @@ USE_I18N = True
 USE_TZ = False
 
 STATIC_URL = 'static/'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

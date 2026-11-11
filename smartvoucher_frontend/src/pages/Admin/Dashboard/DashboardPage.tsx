@@ -32,7 +32,8 @@ import {
   ComposedChart,
   Bar
 } from "recharts";
-import { Ticket, Percent, TrendingUp, DollarSign } from "lucide-react";
+import { Ticket, Percent, TrendingUp, DollarSign, RefreshCw } from "lucide-react";
+import { Button } from '@/components/ui/button';
 import { API_BASE_URL, authFetch } from '@/services/apiService';
 import { DatePickerWithRange } from './DateRangePicker';
 import { useNavigate } from 'react-router-dom';
@@ -59,15 +60,28 @@ const formatChartDate = (dateString: string, groupBy: string) => {
   return formatDateInVietnam(dateString, { day: '2-digit', month: '2-digit' });
 };
 
+const getCurrentMonthRange = () => {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const toDateInput = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  return { from: toDateInput(start), to: toDateInput(now) };
+};
+
 // --- COMPONENT CHÍNH ---
 export default function DashboardPage() {
   const navigate = useNavigate();
   const [topFilter, setTopFilter] = useState("most_used"); // State quản lý tiêu chí của Top Vouchers
   // 1. STATES BỘ LỌC
-  const [dateChart, setDateChart] = useState({ from: "2026-03-01", to: "2026-03-31" });
+  const [dateChart, setDateChart] = useState(getCurrentMonthRange);
   const [chartGroupBy, setChartGroupBy] = useState("day");
-  const [dateTop, setDateTop] = useState({ from: "2026-03-01", to: "2026-03-31" });
-  const [datePerformance, setDatePerformance] = useState({ from: "2026-03-01", to: "2026-03-31" });
+  const [dateTop, setDateTop] = useState(getCurrentMonthRange);
+  const [datePerformance, setDatePerformance] = useState(getCurrentMonthRange);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // 2. STATES DỮ LIỆU
   const [overview, setOverview] = useState<any>(null);
@@ -76,58 +90,73 @@ export default function DashboardPage() {
   const [performance, setPerformance] = useState<any[]>([]);
   const [exportLoading, setExportLoading] = useState(false);
 
-  // 3. (Mô phỏng useEffect gọi API - Bạn đã có phần này ở câu trả lời trước)
   // --- API: OVERVIEW ---
   useEffect(() => {
     const fetchOverview = async () => {
-      const res = await authFetch(`${API_BASE_URL}/vouchers/stats/overview/`);
-      const data = await res.json();
-      setOverview(data);
+      try {
+        const res = await authFetch(`${API_BASE_URL}/vouchers/stats/overview/`);
+        if (!res.ok) throw new Error('Không thể tải thống kê tổng quan.');
+        setOverview(await res.json());
+      } catch {
+        toast.error('Không thể tải thống kê tổng quan.');
+      }
     };
     fetchOverview();
-  }, []); // Chỉ chạy lại khi dateOverview đổi
+  }, [refreshKey]);
 
   // --- API: REVENUE CHART (XỬ LÝ LOGIC ĐẶC BIỆT) ---
   useEffect(() => {
     const fetchChart = async () => {
-      // Khởi tạo URL cơ bản
       let url = `${API_BASE_URL}/vouchers/stats/revenue-chart/?group_by=${chartGroupBy}`;
-
-      // Nếu là day, mới nối thêm start_date và end_date
-      if (chartGroupBy === "day" && dateChart.from && dateChart.to) {
+      if (dateChart.from && dateChart.to) {
         url += `&start_date=${dateChart.from}&end_date=${dateChart.to}`;
       }
 
-      const res = await authFetch(url);
-      const data = await res.json();
-      setChart(data.chart || []);
+      try {
+        const res = await authFetch(url);
+        if (!res.ok) throw new Error('Không thể tải biểu đồ thống kê.');
+        const data = await res.json();
+        setChart(data.chart || []);
+      } catch {
+        toast.error('Không thể tải biểu đồ thống kê.');
+      }
     };
     fetchChart();
-  }, [chartGroupBy, dateChart]); // Chạy lại khi group_by hoặc dateChart đổi
+  }, [chartGroupBy, dateChart, refreshKey]);
 
   // --- API: TOP VOUCHERS ---
   useEffect(() => {
     const fetchTopVouchers = async () => {
       if (!dateTop.from || !dateTop.to) return;
       const url = `${API_BASE_URL}/vouchers/stats/top-vouchers/?start_date=${dateTop.from}&end_date=${dateTop.to}&limit=5`;
-      const res = await authFetch(url);
-      const data = await res.json();
-      setTopVouchers(data.top_vouchers || { most_used: [], highest_revenue: [] });
+      try {
+        const res = await authFetch(url);
+        if (!res.ok) throw new Error('Không thể tải Top Voucher.');
+        const data = await res.json();
+        setTopVouchers(data.top_vouchers || { most_used: [], highest_revenue: [] });
+      } catch {
+        toast.error('Không thể tải Top Voucher.');
+      }
     };
     fetchTopVouchers();
-  }, [dateTop]);
+  }, [dateTop, refreshKey]);
 
   // --- API: PERFORMANCE ---
   useEffect(() => {
     const fetchPerformance = async () => {
       if (!datePerformance.from || !datePerformance.to) return;
       const url = `${API_BASE_URL}/vouchers/stats/performance/?start_date=${datePerformance.from}&end_date=${datePerformance.to}&ordering=-usage_count`;
-      const res = await authFetch(url);
-      const data = await res.json();
-      setPerformance(data.results || []);
+      try {
+        const res = await authFetch(url);
+        if (!res.ok) throw new Error('Không thể tải hiệu suất voucher.');
+        const data = await res.json();
+        setPerformance(data.results || []);
+      } catch {
+        toast.error('Không thể tải hiệu suất voucher.');
+      }
     };
     fetchPerformance();
-  }, [datePerformance]);
+  }, [datePerformance, refreshKey]);
 
   const handleExport = async (type: 'excel' | 'csv') => {
     try {
@@ -204,10 +233,15 @@ export default function DashboardPage() {
             Phân tích chuyên sâu về hiệu suất và doanh thu khuyến mãi
           </p>
         </div>
-        <ExportDropdown 
-          onExport={handleExport}
-          isLoading={exportLoading}
-        />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setRefreshKey((key) => key + 1)}>
+            <RefreshCw className="mr-2 size-4" /> Làm mới thống kê
+          </Button>
+          <ExportDropdown
+            onExport={handleExport}
+            isLoading={exportLoading}
+          />
+        </div>
       </div>
 
       {/* --- PHẦN 1: OVERVIEW CARDS --- */}

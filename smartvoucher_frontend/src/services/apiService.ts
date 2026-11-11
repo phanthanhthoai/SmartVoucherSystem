@@ -38,15 +38,43 @@ export const getAuthHeaders = (): Record<string, string> => {
 export type WalletVoucher = {
   id: number;
   code: string;
-  type: string;
-  value: number;
-  max_discount_amount: number;
+  title?: string;
+  type: 'fixed' | 'percent';
+  value: number | string;
+  max_discount_amount: number | string | null;
+  min_spend: number | string;
+  product_id: number | null;
   is_used: boolean;
   start_date: string;
   expiry_date: string;
   product_type: string;
   is_active: boolean;
 };
+
+export interface CustomerOrderItem {
+  name: string;
+  product_id: number | null;
+  product_type: string | null;
+  quantity: number;
+  unit_price: string;
+  line_total: string;
+}
+
+export interface CustomerOrder {
+  id: number;
+  external_order_id: string | null;
+  status: 'pending' | 'paid' | 'canceled';
+  total_amount: string;
+  discount_amount: string;
+  final_total: string;
+  created_at: string;
+  applied_voucher: { id: number; code: string; title: string } | null;
+  items: CustomerOrderItem[];
+}
+export interface AdminOrder extends CustomerOrder {
+  customer: string;
+  customer_email: string;
+}
 export const authFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -103,6 +131,9 @@ export const authApi = {
 };
 
 export const orderApi = {
+  mine: async (): Promise<CustomerOrder[]> => (await api.get('/orders/mine/')).data,
+  adminList: async (status?: AdminOrder['status']): Promise<AdminOrder[]> =>
+    (await api.get('/orders/admin/', { params: status ? { status } : undefined })).data,
   sync: async (payload: unknown) => (await api.post('/orders/sync/', payload)).data,
   cancel: async (payload: unknown) => (await api.post('/orders/cancel/', payload)).data,
   // ... các hàm cũ
@@ -112,10 +143,58 @@ export const orderApi = {
   },
 };
 
+export interface ProductCatalogItem {
+  id: number;
+  name: string;
+  product_type: string;
+}
+
+export interface Product extends ProductCatalogItem {
+  description: string;
+  image: string | null;
+  unit_price: string;
+  is_active: boolean;
+}
+
+export interface ProductPayload {
+  name: string;
+  description: string;
+  product_type: string;
+  unit_price: string;
+  is_active: boolean;
+  image?: File | null;
+}
+
+const toProductFormData = (payload: ProductPayload | Partial<ProductPayload>) => {
+  const formData = new FormData();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      formData.append(key, value instanceof File ? value : String(value));
+    }
+  });
+  return formData;
+};
+
+export const productApi = {
+  list: async (includeInactive = false): Promise<Product[]> =>
+    (await api.get('/products/', {
+      params: includeInactive ? { include_inactive: 'true' } : undefined,
+    })).data,
+  create: async (payload: ProductPayload): Promise<Product> =>
+    (await api.post('/products/', toProductFormData(payload))).data,
+  update: async (id: number, payload: Partial<ProductPayload>): Promise<Product> =>
+    (await api.patch(`/products/${id}/`, toProductFormData(payload))).data,
+  deactivate: async (id: number): Promise<void> => {
+    await api.delete(`/products/${id}/`);
+  },
+};
+
 export const voucherApi = {
+  products: async (): Promise<ProductCatalogItem[]> => (await api.get('/vouchers/products/')).data,
   get: async (id: number | string) => (await api.get(`/vouchers/${id}/`)).data,
   apply: async (payload: unknown) => (await api.post('/vouchers/apply/', payload)).data,
-  confirm: async (payload: unknown) => (await api.post('/vouchers/confirm/', payload)).data,
+  confirm: async (orderId: number) =>
+    (await api.post(`/vouchers/orders/${orderId}/confirm/`)).data,
   statsOverview: async () => (await api.get('/vouchers/stats/overview/')).data,
   statsOverviewPublic: async () => (await api.get('/vouchers/stats/overview/public/')).data,
   statsRevenueChart: async (params: { group_by: string; start_date?: string; end_date?: string }) =>
@@ -137,6 +216,40 @@ export const voucherApi = {
   resendEmail: async (voucherId: number, userId: number) => (await api.post(`/vouchers/${voucherId}/resend-email/`, { user_id: userId })).data,
   sendEmail: async (voucherId: number, email: string) => (await api.post(`/vouchers/${voucherId}/send-email/`, { email })).data,
   userHistory: async (userId: number) => (await api.get(`/vouchers/user/${userId}/history/`)).data,
+};
+
+export interface Campaign {
+  id: number;
+  name: string;
+  description: string;
+  start_at: string;
+  end_at: string;
+  budget: string | null;
+  status: 'draft' | 'active' | 'paused' | 'completed';
+  created_by: string;
+  voucher_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignPayload {
+  name: string;
+  description: string;
+  start_at: string;
+  end_at: string;
+  budget: string | null;
+  status: Campaign['status'];
+}
+
+export const campaignApi = {
+  list: async (): Promise<Campaign[]> => (await api.get('/vouchers/campaigns/')).data,
+  create: async (payload: CampaignPayload): Promise<Campaign> =>
+    (await api.post('/vouchers/campaigns/', payload)).data,
+  update: async (id: number, payload: CampaignPayload): Promise<Campaign> =>
+    (await api.patch(`/vouchers/campaigns/${id}/`, payload)).data,
+  delete: async (id: number): Promise<void> => {
+    await api.delete(`/vouchers/campaigns/${id}/`);
+  },
 };
 
 export const customerApi = {

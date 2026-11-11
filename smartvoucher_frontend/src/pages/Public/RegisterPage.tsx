@@ -31,8 +31,8 @@ export default function RegisterPage() {
       setError('Email không đúng định dạng hợp lệ.')
       return
     }
-    if (password.length < 6) {
-      setError('Mật khẩu phải từ 6 ký tự trở lên.')
+    if (password.length < 8) {
+      setError('Mật khẩu phải từ 8 ký tự trở lên.')
       return
     }
     if (password !== confirmPassword) {

@@ -2,9 +2,34 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
+from .models import Product
+
+
+class ProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = [
+            "id",
+            "name",
+            "description",
+            "image",
+            "product_type",
+            "unit_price",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_unit_price(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Giá sản phẩm không được âm.")
+        return value
+
 
 class OrderItemInputSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
+    product_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     product_type = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
     quantity = serializers.IntegerField(min_value=1)
     unit_price = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=0)
@@ -14,7 +39,7 @@ class OrderSyncSerializer(serializers.Serializer):
     external_order_id = serializers.CharField(max_length=100)
     user_id = serializers.IntegerField(min_value=1)
     status = serializers.ChoiceField(
-        choices=["pending", "paid", "canceled"],
+        choices=["pending", "canceled"],
         required=False,
         default="pending",
     )

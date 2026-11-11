@@ -1,5 +1,5 @@
 
---- Thread 21900 ---
+--- Thread 34320 ---
   File "C:\Users\Admin\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032, in _bootstrap
     self._bootstrap_inner()
   File "C:\Users\Admin\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075, in _bootstrap_inner
@@ -9,7 +9,7 @@
   File "C:\smartvoucher\smartvoucher_backend\test_debug.py", line 8, in dump_stack
     traceback.print_stack(frame, file=f)
 
---- Thread 23932 ---
+--- Thread 38804 ---
   File "C:\smartvoucher\smartvoucher_backend\manage.py", line 22, in <module>
     main()
   File "C:\smartvoucher\smartvoucher_backend\manage.py", line 18, in main

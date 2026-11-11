@@ -1,32 +1,42 @@
-from django.core.management.base import BaseCommand
-from users.models import User  # Thay 'users' bằng tên app chính xác của bạn
+import os
+
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.management.base import BaseCommand, CommandError
 
 
 class Command(BaseCommand):
-    help = "Seed an admin account into the database"
+    help = "Create an admin account from SMARTVOUCHER_ADMIN_* environment variables"
 
     def handle(self, *args, **kwargs):
-        admin_username = "thoai"
-        admin_email = "thoai@smartvoucher.com"
-        admin_password = "123456"  # Hãy đổi mật khẩu này bảo mật hơn
+        admin_username = os.environ.get("SMARTVOUCHER_ADMIN_USERNAME", "").strip()
+        admin_email = os.environ.get("SMARTVOUCHER_ADMIN_EMAIL", "").strip()
+        admin_password = os.environ.get("SMARTVOUCHER_ADMIN_PASSWORD", "")
+        if not admin_username or not admin_email or not admin_password:
+            raise CommandError(
+                "Set SMARTVOUCHER_ADMIN_USERNAME, SMARTVOUCHER_ADMIN_EMAIL, "
+                "and SMARTVOUCHER_ADMIN_PASSWORD before creating an admin."
+            )
 
+        User = get_user_model()
         if User.objects.filter(username=admin_username).exists():
             self.stdout.write(
-                self.style.WARNING(f"User '{admin_username}' đã tồn tại!")
+                self.style.WARNING(f"User '{admin_username}' already exists.")
             )
             return
 
-        # Tạo tài khoản Admin với các trường tùy chỉnh (Custom fields) của bạn
-        admin_user = User.objects.create_superuser(
+        candidate = User(username=admin_username, email=admin_email)
+        try:
+            validate_password(admin_password, user=candidate)
+        except ValidationError as exc:
+            raise CommandError("; ".join(exc.messages)) from exc
+
+        User.objects.create_superuser(
             username=admin_username,
             email=admin_email,
             password=admin_password,
             role=User.ROLE_ADMIN,
             customer_group=User.CUSTOMER_GROUP_ALL,
         )
-
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Tạo thành công Admin: {admin_username} | Mật khẩu: {admin_password}"
-            )
-        )
+        self.stdout.write(self.style.SUCCESS(f"Created admin account: {admin_username}"))

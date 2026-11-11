@@ -216,6 +216,11 @@ class VoucherRule(models.Model):
         blank=True,
     )
 
+    required_product_id = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+    )
+
     # =========================
     # Existing time rule
     # =========================
@@ -422,6 +427,12 @@ class VoucherFraudEvent(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=["device_fingerprint_hash", "created_at"]),
-            models.Index(fields=["ip_address", "created_at"]),
+            models.Index(
+                fields=["device_fingerprint_hash", "created_at"],
+                name="voucher_fra_device__0d3576_idx",
+            ),
+            models.Index(
+                fields=["ip_address", "created_at"],
+                name="voucher_fra_ip_addr_1a8985_idx",
+            ),
         ]

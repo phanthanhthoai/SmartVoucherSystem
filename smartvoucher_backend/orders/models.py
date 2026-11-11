@@ -3,6 +3,27 @@ from django.core.validators import MinValueValidator
 from django.db import models
 
 
+class Product(models.Model):
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    image = models.ImageField(upload_to="products/", blank=True)
+    product_type = models.CharField(max_length=100)
+    unit_price = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+
+    def __str__(self):
+        return self.name
+
+
 class Order(models.Model):
     STATUS_PENDING = "pending"
     STATUS_PAID = "paid"
@@ -69,6 +90,11 @@ class OrderItem(models.Model):
     )
 
     name = models.CharField(max_length=255)
+
+    product_id = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+    )
 
     product_type = models.CharField(
         max_length=100,

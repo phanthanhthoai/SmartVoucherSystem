@@ -17,7 +17,14 @@ from .services import staff_user
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.models import Permission, Group
 from django.contrib.auth import get_user_model
-from .permissions import IsStaffOrAdmin
+from django.db.models import Count, Sum
+from orders.models import Order
+from vouchers.services.accumulation import (
+    paid_order_net_spend,
+    paid_orders_for_accumulation,
+    summarize_paid_orders,
+)
+from .permissions import IsAdminRole, IsStaffOrAdmin
 
 
 class VoucherForUserAPI(APIView):
@@ -47,6 +54,7 @@ class VoucherForUserAPI(APIView):
                 
                 # 🚨 ĐÂY LÀ CHỖ ĐÃ FIX: Đi xuyên qua bảng Rule an toàn
                 "product_type": uv.voucher.rule.required_product_type if hasattr(uv.voucher, 'rule') else "All",
+                "product_id": uv.voucher.rule.required_product_id if hasattr(uv.voucher, 'rule') else None,
                 
                 "is_active": uv.voucher.is_active,
             }
@@ -73,6 +81,8 @@ class RegisterAPI(APIView):
         return Response({"message": "User created"}, status=201)
     
 class StaffRegisterAPI(APIView):
+    permission_classes = [IsAuthenticated, IsAdminRole]
+
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -106,7 +116,7 @@ class MeAPI(APIView):
 
 
 class PermissionListAPI(APIView):
-    permission_classes = [IsAuthenticated, IsStaffOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdminRole]
 
     def get(self, request):
         perms = Permission.objects.select_related("content_type").all()
@@ -126,7 +136,7 @@ class PermissionListAPI(APIView):
 
 
 class CreateGroupAPI(APIView):
-    permission_classes = [IsAuthenticated, IsStaffOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdminRole]
 
     def post(self, request):
         serializer = CreateGroupSerializer(data=request.data)
@@ -139,11 +149,16 @@ class CreateGroupAPI(APIView):
 
         permissions = []
         for code in perm_codes:
-            app_label, codename = code.split(".")
-            perm = Permission.objects.get(
+            parts = code.split(".")
+            if len(parts) != 2:
+                return Response({"error": f"Mã quyền không hợp lệ: {code}"}, status=400)
+            app_label, codename = parts
+            perm = Permission.objects.filter(
                 content_type__app_label=app_label,
                 codename=codename
-            )
+            ).first()
+            if perm is None:
+                return Response({"error": f"Không tìm thấy quyền: {code}"}, status=400)
             permissions.append(perm)
 
         group.permissions.set(permissions)
@@ -156,7 +171,7 @@ class CreateGroupAPI(APIView):
 
 
 class AssignGroupToUserAPI(APIView):
-    permission_classes = [IsAuthenticated, IsStaffOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdminRole]
 
     def post(self, request):
         serializer = AssignGroupSerializer(data=request.data)
@@ -166,8 +181,8 @@ class AssignGroupToUserAPI(APIView):
         group_name = serializer.validated_data["group_name"]
 
         User = get_user_model()
-        user = User.objects.get(username=username)
-        group = Group.objects.get(name=group_name)
+        user = get_object_or_404(User, username=username)
+        group = get_object_or_404(Group, name=group_name)
 
         user.groups.add(group)
 
@@ -186,7 +201,7 @@ class CustomerListAPI(APIView):
         page_size = request.query_params.get("page_size", 10)
 
         User = get_user_model()
-        users_qs = User.objects.filter(role="customer").order_by("-id")
+        users_qs = User.objects.filter(role="customer", is_active=True).order_by("-id")
 
         if search_query:
             users_qs = users_qs.filter(
@@ -199,21 +214,39 @@ class CustomerListAPI(APIView):
         except Exception:
             page_obj = paginator.page(1)
 
-        # Tinh toan tong cong cho stats cards
-        from django.db.models import Sum
-        totals = users_qs.aggregate(
-            total_points=Sum("points"),
-            total_spent=Sum("total_spent")
+        totals = users_qs.aggregate(total_points=Sum("points"))
+        paid_orders = paid_orders_for_accumulation(None, Order).filter(
+            user_id__in=users_qs.values("pk")
         )
+        paid_totals = summarize_paid_orders(paid_orders)
 
-        serializer = UserSummarySerializer(page_obj.object_list, many=True)
+        page_users = list(page_obj.object_list)
+        serializer = UserSummarySerializer(page_users, many=True)
+        paid_stats_by_user = {
+            row["user_id"]: row
+            for row in paid_orders.filter(
+                user_id__in=[user.pk for user in page_users]
+            )
+            .values("user_id")
+            .annotate(
+                total_spent=Sum(paid_order_net_spend()),
+                paid_order_count=Count("id"),
+            )
+        }
+        results = serializer.data
+        for user, result in zip(page_users, results):
+            user_stats = paid_stats_by_user.get(user.pk, {})
+            result["total_spent"] = str(user_stats.get("total_spent") or 0)
+            result["paid_order_count"] = user_stats.get("paid_order_count", 0)
+
         return Response({
             "count": paginator.count,
-            "results": serializer.data,
+            "results": results,
             "total_pages": paginator.num_pages,
             "current_page": page_obj.number,
             "total_points": totals["total_points"] or 0,
-            "total_spent": totals["total_spent"] or 0,
+            "total_spent": paid_totals["total_spent"],
+            "paid_order_count": paid_totals["total_orders"],
         })
 
 
@@ -241,7 +274,10 @@ class StaffListAPI(APIView):
 
     def get(self, request):
         User = get_user_model()
-        users = User.objects.filter(role__in=["staff", "admin"]).order_by("id")
+        users = User.objects.filter(
+            role__in=["staff", "admin"],
+            is_active=True,
+        ).order_by("id")
         serializer = UserSummarySerializer(users, many=True)
         return Response(serializer.data)
 
@@ -259,7 +295,20 @@ class UpdateUserRoleAPI(APIView):
         except User.DoesNotExist:
             return Response({"error": "User khong ton tai"}, status=404)
 
-        user.role = serializer.validated_data["role"]
+        new_role = serializer.validated_data["role"]
+        is_admin = request.user.is_superuser or request.user.role == "admin"
+        if (new_role == "admin" or user.role == "admin") and not is_admin:
+            return Response(
+                {"error": "Chỉ quản trị viên mới được cấp hoặc thay đổi vai trò admin."},
+                status=403,
+            )
+        if request.user.id == user.id and new_role != "admin" and is_admin:
+            return Response(
+                {"error": "Không thể tự hạ vai trò quản trị viên của chính mình."},
+                status=400,
+            )
+
+        user.role = new_role
         user.is_staff = user.role in {"staff", "admin"}
         user.save(update_fields=["role", "is_staff"])
 
@@ -272,7 +321,7 @@ class UpdateUserRoleAPI(APIView):
 
 
 class UpdateUserPermissionsAPI(APIView):
-    permission_classes = [IsAuthenticated, IsStaffOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdminRole]
 
     def patch(self, request, user_id):
         serializer = UpdateUserPermissionsSerializer(data=request.data)
@@ -289,11 +338,16 @@ class UpdateUserPermissionsAPI(APIView):
 
         permissions = []
         for code in perm_codes:
-            app_label, codename = code.split(".")
-            perm = Permission.objects.get(
+            parts = code.split(".")
+            if len(parts) != 2:
+                return Response({"error": f"Mã quyền không hợp lệ: {code}"}, status=400)
+            app_label, codename = parts
+            perm = Permission.objects.filter(
                 content_type__app_label=app_label,
                 codename=codename,
-            )
+            ).first()
+            if perm is None:
+                return Response({"error": f"Không tìm thấy quyền: {code}"}, status=400)
             permissions.append(perm)
 
         groups = list(Group.objects.filter(name__in=group_names))
@@ -320,8 +374,20 @@ class UserUpdateAPI(APIView):
         User = get_user_model()
         user = get_object_or_404(User, id=user_id)
 
-        if user.role == "admin" and request.user.role != "admin":
+        is_admin = request.user.is_superuser or request.user.role == "admin"
+        if user.role == "admin" and not is_admin:
             return Response({"error": "Khong co quyen chinh sua admin"}, status=403)
+        if "total_spent" in request.data:
+            return Response(
+                {"error": "Tổng chi tiêu được tự tính từ các đơn đã thanh toán."},
+                status=400,
+            )
+        protected_fields = {"points"}.intersection(request.data)
+        if protected_fields and not is_admin:
+            return Response(
+                {"error": "Chỉ quản trị viên mới được điều chỉnh điểm và tổng chi tiêu."},
+                status=403,
+            )
 
         serializer = UserUpdateSerializer(user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)

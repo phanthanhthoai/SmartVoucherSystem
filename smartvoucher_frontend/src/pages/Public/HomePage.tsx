@@ -15,6 +15,7 @@ import {
   UserIcon,
   ChevronDown,
   Ticket,
+  ClipboardList,
   LayoutDashboard,
   LogOut
 } from 'lucide-react'
@@ -211,13 +212,22 @@ export default function HomePage() {
                       {/* Phần Links Điều hướng */}
                       <div className="py-2">
                         {user.role === 'customer' ? (
-                          <Link
-                            to="/vouchers"
-                            onClick={() => setIsOpen(false)}
-                            className="flex items-center gap-3 px-5 py-3 text-sm font-semibold text-slate-600 hover:bg-cyan-50 hover:text-cyan-600 transition-colors"
-                          >
-                            <Ticket className="w-4 h-4" /> Ví Voucher của tôi
-                          </Link>
+                          <>
+                            <Link
+                              to="/vouchers"
+                              onClick={() => setIsOpen(false)}
+                              className="flex items-center gap-3 px-5 py-3 text-sm font-semibold text-slate-600 hover:bg-cyan-50 hover:text-cyan-600 transition-colors"
+                            >
+                              <Ticket className="w-4 h-4" /> Ví Voucher của tôi
+                            </Link>
+                            <Link
+                              to="/shop/orders"
+                              onClick={() => setIsOpen(false)}
+                              className="flex items-center gap-3 px-5 py-3 text-sm font-semibold text-slate-600 hover:bg-cyan-50 hover:text-cyan-600 transition-colors"
+                            >
+                              <ClipboardList className="w-4 h-4" /> Đơn hàng của tôi
+                            </Link>
+                          </>
                         ) : (
                           <Link
                             to="/admin"

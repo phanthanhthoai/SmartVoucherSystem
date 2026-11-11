@@ -146,7 +146,11 @@ export default function CartPage() {
                   >
                     {/* ✨ Ảnh Thumbnail Icon - Sửa điều kiện thành 'candy' */}
                     <div className={`w-24 h-24 shrink-0 rounded-2xl bg-gradient-to-br ${item.color} flex items-center justify-center shadow-inner`}>
-                      {item.product_type === 'candy' ? <Candy className="w-10 h-10 text-white/70" /> : <Coffee className="w-10 h-10 text-white/70" />}
+                      {item.image ? (
+                        <img src={item.image} alt={item.name} className="h-full w-full rounded-2xl object-cover" />
+                      ) : (
+                        item.product_type === 'candy' ? <Candy className="w-10 h-10 text-white/70" /> : <Coffee className="w-10 h-10 text-white/70" />
+                      )}
                     </div>
 
                     {/* Thông tin SP */}

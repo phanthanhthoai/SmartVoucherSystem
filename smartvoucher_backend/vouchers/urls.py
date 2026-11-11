@@ -15,18 +15,33 @@ from .views import (
     VoucherRevenueChartAPIView,
     TopVouchersAPIView,
     VoucherListAPIView,
+    VoucherProductCatalogAPIView,
     VoucherRecipientDeleteAPIView,
     CheckoutAPIView,
     ConfirmOrderAPIView,
+    UserVoucherHistoryAPIView,
 )
+from .delivery_views import (
+    ResendVoucherEmailAPIView,
+    SendVoucherToEmailAPIView,
+    VoucherDeliveryLogAPIView,
+)
+from .campaign_views import CampaignDetailAPIView, CampaignListCreateAPIView
 
 urlpatterns = [
+    path("campaigns/", CampaignListCreateAPIView.as_view()),
+    path("campaigns/<int:campaign_id>/", CampaignDetailAPIView.as_view()),
+    path("products/", VoucherProductCatalogAPIView.as_view()),
     path("", VoucherListAPIView.as_view()),
     path("create/", CreateVoucherAPIView.as_view()),
     path("<int:voucher_id>/", VoucherDetailAPIView.as_view()),
     path("create-and-distribute/", CreateAndDistributeVoucherAPIView.as_view()),
     path("distribute/", DistributeVoucherAPIView.as_view()),
     path("events/order-success/", ProcessOrderSuccessEventAPIView.as_view()),
+    path("user/<int:user_id>/history/", UserVoucherHistoryAPIView.as_view()),
+    path("<int:voucher_id>/delivery-logs/", VoucherDeliveryLogAPIView.as_view()),
+    path("<int:voucher_id>/resend-email/", ResendVoucherEmailAPIView.as_view()),
+    path("<int:voucher_id>/send-email/", SendVoucherToEmailAPIView.as_view()),
     path("<int:voucher_id>/eligible-users/", EligibleUsersForVoucherAPIView.as_view()),
     path("<int:voucher_id>/recipients/", VoucherRecipientListAPIView.as_view()),
     path("<int:voucher_id>/recipients/page/", VoucherRecipientPageView.as_view()),

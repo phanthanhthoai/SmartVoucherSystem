@@ -5,8 +5,9 @@ export type CartItem = {
   id: number;
   name: string;
   price: number;
-  product_type: 'candy' | 'drink';
+  product_type: string;
   color: string;
+  image?: string | null;
   quantity: number;
 };
 

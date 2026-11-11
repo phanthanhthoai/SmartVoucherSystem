@@ -19,7 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox"
 import { Calendar } from "@/components/ui/calendar"
 import type { Voucher } from "@/types/voucher"
-import { voucherApi } from "@/services/apiService"
+import { campaignApi, productApi, type Campaign, type ProductCatalogItem, voucherApi } from "@/services/apiService"
 import { toast } from "sonner"
 import { addDays, getNowInVietnam, getStartOfTodayInVietnam, toVietnamFormDate } from "@/utils/dateTime"
 
@@ -34,6 +34,7 @@ const formSchema = z.object({
   expiry_date: z.date(),
   quantity: z.number().min(1, "Số lượng tối thiểu là 1"),
   is_active: z.boolean(),
+  campaign_id: z.number().nullable(),
   event_type: z.string().nullable(),
   rule: z.object({
     required_role: z.string().nullable(),
@@ -41,6 +42,7 @@ const formSchema = z.object({
     min_order_amount: z.number().min(0),
     min_items: z.number().min(1, "Số lượng món tối thiểu phải từ 1"),
     required_product_type: z.string().nullable(),
+    required_product_id: z.number().nullable(),
     period_type: z.enum(["day", "week", "month"]).nullable(),
     // Các trường tích lũy mới
     lookback_days: z.number().min(0).optional(),
@@ -62,6 +64,13 @@ const formSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: "Ngày kết thúc phải sau ngày bắt đầu",
       path: ["expiry_date"],
+    });
+  }
+  if (data.rule.lookback_days && (data.rule.target_month || data.rule.target_year)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Chọn số ngày lùi hoặc tháng/năm, không dùng đồng thời",
+      path: ["rule", "lookback_days"],
     });
   }
 });
@@ -217,6 +226,17 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
   const [releaseOpen, setReleaseOpen] = useState(false)
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [currentTime, setCurrentTime] = useState(getNowInVietnam())
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [catalogProducts, setCatalogProducts] = useState<ProductCatalogItem[]>([])
+
+  useEffect(() => {
+    campaignApi.list()
+      .then(setCampaigns)
+      .catch(() => toast.error("Không thể tải danh sách chiến dịch"))
+    productApi.list(true)
+      .then(setCatalogProducts)
+      .catch(() => toast.error("Không thể tải danh sách sản phẩm"))
+  }, [])
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(getNowInVietnam()), 1000)
@@ -235,6 +255,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
       min_order_amount: initialData.rule?.min_order_amount ?? 0,
       min_items: initialData.rule && initialData.rule.min_items > 0 ? initialData.rule.min_items : 1,
       required_product_type: initialData.rule?.required_product_type || null,
+      required_product_id: initialData.rule?.required_product_id ?? null,
       period_type: initialData.rule?.period_type || null,
       // Dữ liệu tích lũy
       lookback_days: initialData.rule?.lookback_days || 0,
@@ -244,6 +265,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
       target_year: initialData.rule?.target_year || null,
     },
     is_active: initialData.is_active !== undefined ? initialData.is_active : true,
+    campaign_id: initialData.campaign_id ?? null,
   } : {
     code: "",
     title: "",
@@ -256,6 +278,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
     // expiry_date: addDays(getNowInVietnam(), 30),
     quantity: 1,
     is_active: true,
+    campaign_id: null,
     event_type: "regular",
     rule: {
       required_role: "none",
@@ -263,6 +286,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
       min_order_amount: 0,
       min_items: 1,
       required_product_type: null,
+      required_product_id: null,
       period_type: null,
       lookback_days: 0,
       min_accumulated_orders: 0,
@@ -303,6 +327,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
         quantity: Number(data.quantity),
         event_type: data.event_type,
         is_active: data.is_active,
+        campaign: data.campaign_id,
         release_date: data.release_date.toISOString(),
         expiry_date: data.expiry_date.toISOString(),
         // release_date: toVietnamISOString(data.release_date),
@@ -313,6 +338,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
           min_order_amount: Number(data.rule.min_order_amount),
           min_items: Number(data.rule.min_items),
           required_product_type: data.rule.required_product_type === 'none' || !data.rule.required_product_type ? null : data.rule.required_product_type,
+          required_product_id: data.rule.required_product_id,
           period_type: data.rule.period_type || null,
           
           lookback_days: Number(data.rule.lookback_days || 0),
@@ -603,6 +629,26 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="space-y-2 md:col-span-3">
+                  <Label className="font-semibold text-sm text-slate-700 pl-1">Chiến dịch</Label>
+                  <Select
+                    value={watchedValues.campaign_id ? String(watchedValues.campaign_id) : "none"}
+                    onValueChange={(value) => form.setValue("campaign_id", value === "none" ? null : Number(value))}
+                  >
+                    <SelectTrigger className="h-12 rounded-xl bg-slate-50 hover:bg-white transition-all shadow-inner border-transparent font-semibold text-slate-700">
+                      <SelectValue placeholder="Không thuộc chiến dịch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Không thuộc chiến dịch</SelectItem>
+                      {campaigns.map((campaign) => (
+                        <SelectItem key={campaign.id} value={String(campaign.id)}>
+                          {campaign.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-500">Tạo hoặc quản lý chiến dịch tại mục Chiến dịch trong menu admin.</p>
+                </div>
                 <div className="space-y-2">
                   <Label className="font-semibold text-sm text-slate-700 pl-1">Loại chiến dịch</Label>
                   <Select
@@ -635,6 +681,12 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
                         <div className="flex items-center gap-2">
                           <TrendingUp className="w-4 h-4 text-amber-500" />
                           <span>Tự động/Thủ công</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="order_success" className="rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <TrendingUp className="w-4 h-4 text-emerald-500" />
+                          <span>Tự động cấp sau đơn thành công</span>
                         </div>
                       </SelectItem>
                     </SelectContent>
@@ -958,19 +1010,44 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
                       <SelectItem value="month" className="rounded-lg">Theo Tháng</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-[10px] text-slate-400 px-1">
+                    Yêu cầu khách có ít nhất một đơn đã thanh toán trong chu kỳ; không thay thế bộ lọc thời gian tích lũy bên dưới.
+                  </p>
                 </div>
               </div>
 
               {/* Loại Sản Phẩm Áp Dụng */}
               <div className="pt-6 border-t border-slate-50">
-                <div className="space-y-2">
-                  <Label className="font-semibold text-sm text-slate-700 pl-1">Loại sản phẩm áp dụng</Label>
-                  <Input 
-                    placeholder="VD: beverage, food... (Để trống nếu áp dụng toàn bộ)" 
-                    className="h-12 rounded-xl bg-slate-50 focus:bg-white transition-all shadow-inner border-transparent focus:ring-indigo-500/10 font-bold text-slate-700"
-                    {...form.register("rule.required_product_type")} 
-                  />
+                <div className="grid gap-5 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label className="font-semibold text-sm text-slate-700 pl-1">Danh mục áp dụng</Label>
+                    <Input
+                      placeholder="VD: drink, candy... (để trống áp dụng tất cả)"
+                      className="h-12 rounded-xl bg-slate-50 focus:bg-white transition-all shadow-inner border-transparent focus:ring-indigo-500/10 font-bold text-slate-700"
+                      {...form.register("rule.required_product_type")}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-semibold text-sm text-slate-700 pl-1">Sản phẩm chỉ định</Label>
+                    <Select
+                      value={watchedValues.rule.required_product_id ? String(watchedValues.rule.required_product_id) : "all"}
+                      onValueChange={(value) => form.setValue("rule.required_product_id", value === "all" ? null : Number(value))}
+                    >
+                      <SelectTrigger className="h-12 rounded-xl bg-slate-50 font-semibold text-slate-700">
+                        <SelectValue placeholder="Tất cả sản phẩm" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Tất cả sản phẩm</SelectItem>
+                        {catalogProducts.map((product) => (
+                          <SelectItem key={product.id} value={String(product.id)}>
+                            {product.name} ({product.product_type})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
+                <p className="mt-2 text-xs text-slate-500">Nếu chọn cả danh mục và sản phẩm, voucher chỉ áp dụng cho sản phẩm thuộc danh mục đó.</p>
               </div>
 
             </CardContent>
@@ -985,7 +1062,10 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
                 </div>
                 <div>
                   <CardTitle className="text-lg font-bold text-slate-800">Điều kiện tích lũy (Auto System)</CardTitle>
-                  <CardDescription className="text-slate-500 font-medium">Thiết lập KPI để hệ thống tự động phát Voucher</CardDescription>
+                  <CardDescription className="text-slate-500 font-medium">
+                    Chỉ tính đơn đã thanh toán; tiền tích lũy là số tiền thực trả sau giảm giá.
+                    Chọn loại chiến dịch “Tự động cấp sau đơn thành công” để cấp voucher khi đơn mới giúp khách đạt ngưỡng.
+                  </CardDescription>
                 </div>
               </div>
             </CardHeader>
@@ -994,7 +1074,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 {/* Tháng */}
                 <div className="space-y-2">
-                  <Label className="font-semibold text-sm text-slate-700 pl-1">Tháng xét duyệt</Label>
+                  <Label className="font-semibold text-sm text-slate-700 pl-1">Tháng tích lũy</Label>
                   <Select
                     value={watchedValues.rule.target_month ? watchedValues.rule.target_month.toString() : 'none'}
                     onValueChange={(val) => form.setValue("rule.target_month", val === 'none' ? null : parseInt(val))}
@@ -1013,7 +1093,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
 
                 {/* Năm */}
                 <div className="space-y-2">
-                  <Label className="font-semibold text-sm text-slate-700 pl-1">Năm xét duyệt</Label>
+                  <Label className="font-semibold text-sm text-slate-700 pl-1">Năm tích lũy</Label>
                   <Input 
                     type="number"
                     placeholder="VD: 2026" 
@@ -1024,7 +1104,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
 
                 {/* Lookback Days */}
                 <div className="space-y-2">
-                  <Label className="font-semibold text-sm text-slate-700 pl-1">Lookback (Số ngày lùi)</Label>
+                  <Label className="font-semibold text-sm text-slate-700 pl-1">Khoảng tích lũy gần đây</Label>
                   <div className="relative">
                     <Input 
                       type="number"
@@ -1034,14 +1114,14 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
                     />
                     <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">Ngày</div>
                   </div>
-                  <p className="text-[10px] text-slate-400 px-1 italic">*Dùng nếu không xét Tháng/Năm</p>
+                  <p className="text-[10px] text-slate-400 px-1 italic">*Chọn khoảng ngày hoặc tháng/năm; để trống cả ba để tính toàn bộ lịch sử.</p>
                 </div>
               </div>
 
               <div className="pt-6 border-t border-slate-50 grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Tổng đơn */}
                 <div className="space-y-2">
-                  <Label className="font-semibold text-sm text-slate-700 pl-1">Tổng số đơn yêu cầu</Label>
+                  <Label className="font-semibold text-sm text-slate-700 pl-1">Số đơn đã thanh toán tối thiểu</Label>
                   <div className="relative">
                     <Controller
                       control={form.control}
@@ -1062,7 +1142,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
 
                 {/* Tổng tiền */}
                 <div className="space-y-2">
-                  <Label className="font-semibold text-sm text-slate-700 pl-1">Tổng tiền tích lũy yêu cầu</Label>
+                  <Label className="font-semibold text-sm text-slate-700 pl-1">Số tiền thực trả tích lũy tối thiểu</Label>
                   <div className="relative">
                     <Controller
                       control={form.control}

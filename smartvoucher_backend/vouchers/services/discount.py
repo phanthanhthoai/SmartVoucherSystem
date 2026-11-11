@@ -16,15 +16,22 @@ def to_money(value):
     )
 
 
-def matches_product_type(item, product_type):
-    """Kiểm tra loại sản phẩm, không phân biệt chữ hoa/thường."""
-    if not product_type:
-        return True
+def item_value(item, field):
+    if isinstance(item, dict):
+        return item.get(field)
+    return getattr(item, field, None)
 
-    return (
-        (item.product_type or "").casefold()
-        == product_type.casefold()
-    )
+
+def matches_product(item, product_type=None, product_id=None):
+    """Match both configured product category and exact product when present."""
+    item_type = item_value(item, "product_type")
+    if product_type and (
+        (item_type or "").casefold() != product_type.casefold()
+    ):
+        return False
+    if product_id is not None and item_value(item, "product_id") != product_id:
+        return False
+    return True
 
 
 def cap_discount(discount, eligible_amount, voucher):
@@ -42,8 +49,8 @@ def calculate_buy_x_get_y_discount(voucher, rule, items):
     """
     Mua X sản phẩm đủ điều kiện thì được giảm tiền tương ứng Y sản phẩm.
 
-    Không có product_id trong OrderItem nên việc chọn sản phẩm miễn phí
-    hiện dựa trên product_type và đơn giá.
+    Sản phẩm mua được giới hạn theo cả loại và ID nếu rule có cấu hình;
+    sản phẩm tặng vẫn chọn theo loại và đơn giá.
     """
     buy_quantity = int(rule.buy_quantity or 0)
     get_quantity = int(rule.get_quantity or 0)
@@ -54,14 +61,15 @@ def calculate_buy_x_get_y_discount(voucher, rule, items):
     # Sản phẩm dùng để xét điều kiện mua X.
     buying_items = [
         item for item in items
-        if matches_product_type(
+        if matches_product(
             item,
             rule.required_product_type,
+            rule.required_product_id,
         )
     ]
 
     buying_count = sum(
-        max(0, int(item.quantity))
+        max(0, int(item_value(item, "quantity") or 0))
         for item in buying_items
     )
 
@@ -74,14 +82,14 @@ def calculate_buy_x_get_y_discount(voucher, rule, items):
     # Sản phẩm được miễn phí: ưu tiên những đơn vị rẻ nhất.
     reward_items = [
         item for item in items
-        if matches_product_type(item, rule.get_product_type)
+        if matches_product(item, rule.get_product_type)
     ]
 
     reward_unit_prices = []
 
     for item in reward_items:
-        quantity = max(0, int(item.quantity))
-        unit_price = to_money(item.unit_price)
+        quantity = max(0, int(item_value(item, "quantity") or 0))
+        unit_price = to_money(item_value(item, "unit_price"))
 
         reward_unit_prices.extend(
             [unit_price] * quantity
@@ -134,16 +142,17 @@ def calculate_discount_amount(voucher, order):
     # Chỉ tính trên nhóm sản phẩm hợp lệ nếu có quy định.
     eligible_items = [
         item for item in items
-        if matches_product_type(
+        if matches_product(
             item,
             rule.required_product_type if rule else None,
+            rule.required_product_id if rule else None,
         )
     ]
 
     base_amount = sum(
         (
-            to_money(item.unit_price)
-            * max(0, int(item.quantity))
+            to_money(item_value(item, "unit_price"))
+            * max(0, int(item_value(item, "quantity") or 0))
             for item in eligible_items
         ),
         ZERO,

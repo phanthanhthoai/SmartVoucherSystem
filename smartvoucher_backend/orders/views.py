@@ -1,13 +1,152 @@
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from rest_framework.permissions import IsAuthenticated
+from django.shortcuts import get_object_or_404
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from users.permissions import IsStaffOrAdmin
 
-from .models import Order, OrderItem
-from .serializers import OrderCancelSerializer, OrderSyncSerializer
+from .models import Order, OrderItem, Product
+from .serializers import OrderCancelSerializer, OrderSyncSerializer, ProductSerializer
+
+
+class ProductListCreateAPIView(APIView):
+    def get_permissions(self):
+        if self.request.method == "POST" or self.request.query_params.get("include_inactive") == "true":
+            return [IsStaffOrAdmin()]
+        return [AllowAny()]
+
+    def get(self, request):
+        include_inactive = request.query_params.get("include_inactive") == "true"
+        products = Product.objects.all()
+        if not include_inactive:
+            products = products.filter(is_active=True)
+        return Response(ProductSerializer(products, many=True).data)
+
+    def post(self, request):
+        serializer = ProductSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=201)
+
+
+class ProductDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsStaffOrAdmin]
+
+    def get_object(self, product_id):
+        return get_object_or_404(Product, pk=product_id)
+
+    def patch(self, request, product_id):
+        product = self.get_object(product_id)
+        serializer = ProductSerializer(product, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, product_id):
+        product = self.get_object(product_id)
+        if not product.is_active:
+            return Response({"message": "Sản phẩm đã ngừng kinh doanh."})
+        product.is_active = False
+        product.save(update_fields=["is_active", "updated_at"])
+        return Response({"message": "Đã ngừng kinh doanh sản phẩm."})
+
+
+class MyOrdersAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        orders = (
+            Order.objects.filter(user=request.user)
+            .select_related("applied_voucher")
+            .prefetch_related("items")
+            .order_by("-created_at")
+        )
+        data = [
+            {
+                "id": order.id,
+                "external_order_id": order.external_order_id,
+                "status": order.status,
+                "total_amount": str(order.total_amount),
+                "discount_amount": str(order.discount_amount),
+                "final_total": str(max(order.total_amount - order.discount_amount, 0)),
+                "created_at": order.created_at,
+                "applied_voucher": (
+                    {
+                        "id": order.applied_voucher_id,
+                        "code": order.applied_voucher.code,
+                        "title": order.applied_voucher.title,
+                    }
+                    if order.applied_voucher_id
+                    else None
+                ),
+                "items": [
+                    {
+                        "name": item.name,
+                        "product_id": item.product_id,
+                        "product_type": item.product_type,
+                        "quantity": item.quantity,
+                        "unit_price": str(item.unit_price),
+                        "line_total": str(item.line_total),
+                    }
+                    for item in order.items.all()
+                ],
+            }
+            for order in orders
+        ]
+        return Response(data)
+
+
+class AdminOrdersAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsStaffOrAdmin]
+
+    def get(self, request):
+        orders = (
+            Order.objects.select_related("user", "applied_voucher")
+            .prefetch_related("items")
+            .order_by("-created_at")
+        )
+        status_filter = request.query_params.get("status")
+        if status_filter in {
+            Order.STATUS_PENDING,
+            Order.STATUS_PAID,
+            Order.STATUS_CANCELED,
+        }:
+            orders = orders.filter(status=status_filter)
+
+        return Response([
+            {
+                "id": order.id,
+                "external_order_id": order.external_order_id,
+                "customer": order.user.username,
+                "customer_email": order.user.email,
+                "status": order.status,
+                "total_amount": str(order.total_amount),
+                "discount_amount": str(order.discount_amount),
+                "final_total": str(max(order.total_amount - order.discount_amount, 0)),
+                "created_at": order.created_at,
+                "applied_voucher": (
+                    {
+                        "id": order.applied_voucher_id,
+                        "code": order.applied_voucher.code,
+                        "title": order.applied_voucher.title,
+                    }
+                    if order.applied_voucher_id
+                    else None
+                ),
+                "items": [
+                    {
+                        "name": item.name,
+                        "quantity": item.quantity,
+                        "unit_price": str(item.unit_price),
+                        "line_total": str(item.line_total),
+                    }
+                    for item in order.items.all()
+                ],
+            }
+            for order in orders
+        ])
 
 
 class SyncOrderAPIView(APIView):
@@ -53,6 +192,11 @@ class SyncOrderAPIView(APIView):
                     {"error": "Không thể sửa đơn hàng đã hoàn tất hoặc đã hủy."},
                     status=409,
                 )
+            if order.applied_voucher_id:
+                return Response(
+                    {"error": "Không thể đồng bộ lại đơn đã áp dụng voucher; hãy tạo đơn mới."},
+                    status=409,
+                )
             order.status = data["status"]
             order.total_amount = data["total_amount"]
             order.save(update_fields=["status", "total_amount"])
@@ -71,6 +215,7 @@ class SyncOrderAPIView(APIView):
                 OrderItem.objects.create(
                     order=order,
                     name=item["name"],
+                    product_id=item.get("product_id"),
                     product_type=item.get("product_type"),
                     quantity=item["quantity"],
                     unit_price=item["unit_price"],

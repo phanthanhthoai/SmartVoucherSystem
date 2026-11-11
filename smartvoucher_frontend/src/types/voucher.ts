@@ -5,6 +5,7 @@ export interface VoucherRule {
   min_order_amount: number;
   min_items: number;
   required_product_type: string | null;
+  required_product_id?: number | null;
   period_type: 'day' | 'week' | 'month' | null;
   lookback_days?: number;
   min_accumulated_spent?: number;
@@ -20,6 +21,7 @@ export interface VoucherRule {
 
 export interface Voucher {
   id?: number;
+  campaign_id?: number | null;
   code: string;
   title: string;
   discount_type: 'percent' | 'fixed';

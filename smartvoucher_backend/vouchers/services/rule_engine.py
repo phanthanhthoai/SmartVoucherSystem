@@ -118,8 +118,12 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
-from django.db.models import Sum, Count
 from django.utils import timezone
+
+from vouchers.services.accumulation import (
+    paid_orders_for_accumulation,
+    summarize_paid_orders,
+)
 
 
 ZERO = Decimal("0")
@@ -182,11 +186,31 @@ def check_order_condition(order, rule):
         return False
 
     required_product_type = rule.required_product_type
+    required_product_id = getattr(rule, "required_product_id", None)
 
-    if required_product_type:
-        has_matching_item = order.items.filter(
-            product_type__iexact=required_product_type
-        ).exists()
+    if required_product_type or required_product_id is not None:
+        if hasattr(order.items, "filter"):
+            matching_items = order.items
+            if required_product_type:
+                matching_items = matching_items.filter(
+                    product_type__iexact=required_product_type
+                )
+            if required_product_id is not None:
+                matching_items = matching_items.filter(product_id=required_product_id)
+            has_matching_item = matching_items.exists()
+        else:
+            has_matching_item = any(
+                (
+                    not required_product_type
+                    or (item.product_type or "").casefold()
+                    == required_product_type.casefold()
+                )
+                and (
+                    required_product_id is None
+                    or getattr(item, "product_id", None) == required_product_id
+                )
+                for item in order.items.all()
+            )
 
         if not has_matching_item:
             return False
@@ -274,6 +298,7 @@ def check_accumulated_condition(
     rule,
     Order,
     current_order=None,
+    include_current_order=False,
 ):
     """Kiểm tra tổng chi tiêu và số đơn đã thanh toán."""
 
@@ -282,43 +307,19 @@ def check_accumulated_condition(
     )
     min_orders = int(rule.min_accumulated_orders or 0)
 
-    orders = Order.objects.filter(
-        user=user,
-        status="paid",
+    orders = paid_orders_for_accumulation(
+        user,
+        Order,
+        rule=rule,
+        current_order=current_order,
+        include_current_order=include_current_order,
     )
-
-    # Không tính đơn hiện tại vào lịch sử mua hàng.
-    if current_order is not None and current_order.pk:
-        orders = orders.exclude(pk=current_order.pk)
-
-    now = get_current_datetime()
-
-    if rule.lookback_days and rule.lookback_days > 0:
-        orders = orders.filter(
-            created_at__gte=now - timedelta(
-                days=rule.lookback_days
-            )
-        )
-
-    if rule.target_year is not None:
-        orders = orders.filter(
-            created_at__year=rule.target_year
-        )
-
-    if rule.target_month is not None:
-        orders = orders.filter(
-            created_at__month=rule.target_month
-        )
-
-    stats = orders.aggregate(
-        total_spent=Sum("total_amount"),
-        total_count=Count("id"),
-    )
+    stats = summarize_paid_orders(orders)
 
     total_spent = Decimal(
-        str(stats["total_spent"] or 0)
+        str(stats["total_spent"])
     )
-    total_count = stats["total_count"] or 0
+    total_count = stats["total_orders"]
 
     if total_spent < min_spent:
         return False
@@ -329,7 +330,13 @@ def check_accumulated_condition(
     return True
 
 
-def is_voucher_eligible(user, voucher, order, Order):
+def is_voucher_eligible(
+    user,
+    voucher,
+    order,
+    Order,
+    include_current_order=False,
+):
     """
     Kiểm tra toàn bộ điều kiện nghiệp vụ.
 
@@ -352,5 +359,6 @@ def is_voucher_eligible(user, voucher, order, Order):
             rule,
             Order,
             current_order=order,
+            include_current_order=include_current_order,
         )
     )

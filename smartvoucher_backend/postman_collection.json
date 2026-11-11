@@ -1074,7 +1074,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"external_order_id\": \"{{external_order_id}}\",\n  \"items\": [\n    {\n      \"name\": \"Tra sua\",\n      \"product_type\": \"beverage\",\n      \"quantity\": 2,\n      \"unit_price\": 30000\n    },\n    {\n      \"name\": \"Banh ngot\",\n      \"product_type\": \"food\",\n      \"quantity\": 1,\n      \"unit_price\": 25000\n    }\n  ],\n  \"voucher_code\": \"{{voucher_code}}\"\n}",
+              "raw": "{\n  \"external_order_id\": \"{{external_order_id}}\",\n  \"items\": [\n    {\n      \"product_id\": 2,\n      \"quantity\": 2\n    },\n    {\n      \"product_id\": 3,\n      \"quantity\": 1\n    }\n  ],\n  \"voucher_code\": \"{{voucher_code}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

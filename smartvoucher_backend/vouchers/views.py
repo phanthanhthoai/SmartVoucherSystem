@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 from collections import defaultdict
 
@@ -29,7 +30,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from orders.models import Order, OrderItem
+from orders.models import Order, OrderItem, Product
 from vouchers.models import Voucher, UserVoucher, VoucherUsage
 from vouchers.services.discount import calculate_discount_amount
 from vouchers.services.rule_engine import is_voucher_eligible
@@ -46,6 +47,7 @@ from .serializers import (
 )
 from .services.distribution import (
     assign_voucher_to_user,
+    assign_order_success_vouchers,
     create_distribution_plan,
     distribute_voucher,
     execute_distribution_plan,
@@ -65,12 +67,24 @@ class _EventOrderItems:
 
     def filter(self, **kwargs):
         product_type = kwargs.get("product_type__iexact")
-        if product_type is None:
-            return _EventOrderItems(self._items)
+        product_id = kwargs.get("product_id")
 
         filtered = [
             item for item in self._items
-            if (item.get("product_type") or "").lower() == str(product_type).lower()
+            if (
+                product_type is None
+                or (
+                    (item.get("product_type") if isinstance(item, dict) else item.product_type) or ""
+                ).casefold() == str(product_type).casefold()
+            )
+            and (
+                product_id is None
+                or (
+                    item.get("product_id")
+                    if isinstance(item, dict)
+                    else getattr(item, "product_id", None)
+                ) == product_id
+            )
         ]
         return _EventOrderItems(filtered)
 
@@ -80,6 +94,7 @@ class _EventOrderItems:
 
 class _EventOrder:
     def __init__(self, total_amount, items):
+        self.pk = None
         self.total_amount = total_amount
         self.items = _EventOrderItems(items)
 
@@ -260,6 +275,56 @@ def _get_order_from_request(request):
 #             }
 #         }, status=200)
 
+def _complete_order_payment(request, order, voucher):
+    order_user = order.user
+    discount = ZERO_MONEY
+
+    if voucher:
+        user_voucher = (
+            UserVoucher.objects.select_for_update()
+            .filter(user=order_user, voucher=voucher)
+            .first()
+        )
+        if user_voucher is None:
+            raise ValidationError(
+                "Voucher này chưa được phân phối cho tài khoản của bạn."
+            )
+
+        if user_voucher.is_used:
+            existing_usage = VoucherUsage.objects.filter(
+                user_voucher=user_voucher,
+                order=order,
+            ).first()
+            if existing_usage is None:
+                raise ValidationError(
+                    "Voucher đã được sử dụng cho đơn hàng khác."
+                )
+            discount = _to_money(existing_usage.discount_amount)
+
+        evaluate_redemption_request(
+            request,
+            user=order_user,
+            voucher=voucher,
+            order=order,
+        )
+
+        order.status = Order.STATUS_PAID
+        order.save(update_fields=["status"])
+
+        success, result = redeem_voucher(order_user, voucher, order)
+        if not success:
+            raise ValidationError({"voucher": result})
+        discount = _to_money(result)
+    else:
+        order.status = Order.STATUS_PAID
+        order.discount_amount = ZERO_MONEY
+        order.save(update_fields=["status", "discount_amount"])
+
+    order.refresh_from_db()
+    assigned_vouchers = assign_order_success_vouchers(order)
+    return discount, assigned_vouchers
+
+
 class CheckoutAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -297,36 +362,39 @@ class CheckoutAPIView(APIView):
                     "items": f"Sản phẩm tại vị trí {index} không hợp lệ."
                 })
 
-            name = str(item.get("name", "")).strip()
-
-            if not name:
-                raise ValidationError({
-                    "items": f"Sản phẩm tại vị trí {index} thiếu name."
-                })
-
             try:
+                product_id = int(item.get("product_id", 0))
                 quantity = int(item.get("quantity", 0))
             except (TypeError, ValueError):
                 raise ValidationError({
-                    "items": f"quantity của sản phẩm {name} không hợp lệ."
+                    "items": f"product_id hoặc quantity tại vị trí {index} không hợp lệ."
                 })
 
+            if product_id <= 0:
+                raise ValidationError({
+                    "items": f"product_id tại vị trí {index} phải lớn hơn 0."
+                })
             if quantity <= 0:
                 raise ValidationError({
-                    "items": f"quantity của sản phẩm {name} phải lớn hơn 0."
+                    "items": f"quantity tại vị trí {index} phải lớn hơn 0."
                 })
 
-            unit_price = _to_money(
-                item.get("unit_price"),
-                f"items[{index}].unit_price",
-            )
+            product = Product.objects.filter(pk=product_id, is_active=True).first()
+            if product is None:
+                raise ValidationError({
+                    "items": f"Sản phẩm {product_id} không tồn tại hoặc đã ngừng kinh doanh."
+                })
+            name = product.name
+            product_type = product.product_type
+            unit_price = product.unit_price
 
             line_total = unit_price * quantity
             subtotal += line_total
 
             prepared_items.append({
                 "name": name,
-                "product_type": item.get("product_type"),
+                "product_id": product_id,
+                "product_type": product_type,
                 "quantity": quantity,
                 "unit_price": unit_price,
             })
@@ -368,7 +436,7 @@ class CheckoutAPIView(APIView):
                     "voucher_code": "Voucher không tồn tại."
                 })
 
-        # Checkout chỉ tạo đơn pending, không đánh dấu paid.
+        # Tạo đơn pending trong transaction để có thể kiểm tra và redeem voucher.
         order = Order.objects.create(
             user=user,
             external_order_id=external_order_id,
@@ -382,6 +450,7 @@ class CheckoutAPIView(APIView):
             OrderItem.objects.create(
                 order=order,
                 name=item["name"],
+                product_id=item["product_id"],
                 product_type=item["product_type"],
                 quantity=item["quantity"],
                 unit_price=item["unit_price"],
@@ -389,8 +458,7 @@ class CheckoutAPIView(APIView):
 
         discount = ZERO_MONEY
 
-        # Nếu gửi voucher_code ngay tại checkout thì áp dụng voucher
-        # vào đơn pending. Nếu không, khách có thể gọi Apply riêng.
+        # Áp dụng voucher trước khi hoàn tất thanh toán trong cùng transaction.
         if voucher:
             discount = _apply_voucher_to_pending_order(
                 user=user,
@@ -398,52 +466,30 @@ class CheckoutAPIView(APIView):
                 order=order,
             )
 
-        final_total = max(
-            subtotal - discount,
-            ZERO_MONEY,
-        )
+        try:
+            discount, assigned_vouchers = _complete_order_payment(
+                request,
+                order,
+                voucher,
+            )
+        except VoucherFraudBlocked as exc:
+            order.delete()
+            return Response({"error": str(exc)}, status=429)
+
+        final_total = max(subtotal - discount, ZERO_MONEY)
 
         return Response({
-            "message": "Đã tạo đơn hàng, đang chờ xác nhận thanh toán.",
+            "message": "Thanh toán thành công.",
             "order_id": order.id,
             "external_order_id": order.external_order_id,
             "status": order.status,
+            "assigned_vouchers": assigned_vouchers,
             "receipt": {
                 "subtotal": str(subtotal),
                 "discount": str(discount),
                 "final_total": str(final_total),
             },
         }, status=201)
-
-# class ApplyVoucherAPIView(APIView):
-#     permission_classes = [IsAuthenticated]
-
-#     def post(self, request):
-#         code = request.data.get("voucher_code")
-#         if not code:
-#             return Response({"error": "voucher_code la bat buoc"}, status=400)
-#         try:
-#             voucher = Voucher.objects.get(code=code, is_deleted=False)
-#         except Voucher.DoesNotExist:
-#             return Response({"error": "Voucher khong ton tai"}, status=404)
-
-#         order, error_response = _get_order_from_request(request)
-#         if error_response:
-#             return error_response
-
-#         if voucher.expiry_date < timezone.now():
-#             return Response({"error": "Voucher het han"}, status=400)
-
-#         if voucher.used_count >= voucher.quantity:
-#             return Response({"error": "Voucher da het luot"}, status=400)
-
-#         if not is_voucher_eligible(request.user, voucher, order, Order):
-#             return Response({"error": "Khong du dieu kien"}, status=403)
-
-#         return Response({
-#             "message": "Voucher hop le",
-#             "discount_preview": calculate_discount_amount(voucher, order),
-#         })
 
 class ApplyVoucherAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -526,7 +572,7 @@ class ApplyVoucherAPIView(APIView):
         }, status=200)
 
 class ConfirmOrderAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsStaffOrAdmin]
 
     @transaction.atomic
     def post(self, request, order_id=None):
@@ -541,8 +587,8 @@ class ConfirmOrderAPIView(APIView):
         # Đọc thông tin ban đầu để biết voucher nào cần khóa trước.
         order_hint = (
             Order.objects
-            .filter(pk=order_id, user=request.user)
-            .values("status", "applied_voucher_id")
+            .filter(pk=order_id)
+            .values("applied_voucher_id")
             .first()
         )
 
@@ -569,15 +615,16 @@ class ConfirmOrderAPIView(APIView):
         # Giữ thứ tự khóa nhất quán: Voucher -> Order.
         order = (
             Order.objects.select_for_update()
-            .get(pk=order_id, user=request.user)
+            .get(pk=order_id)
         )
+        order_user = order.user
 
         # Hỗ trợ gọi Confirm lặp lại mà không redeem lần thứ hai.
         if order.status == Order.STATUS_PAID:
             if voucher:
                 existing_usage = VoucherUsage.objects.filter(
                     order=order,
-                    user_voucher__user=request.user,
+                    user_voucher__user=order_user,
                     user_voucher__voucher=voucher,
                 ).first()
 
@@ -616,68 +663,14 @@ class ConfirmOrderAPIView(APIView):
                 "Chỉ đơn hàng pending mới có thể được xác nhận."
             )
 
-        discount = ZERO_MONEY
-
-        if voucher:
-            # Tìm ví voucher hoặc tạo bản ghi nếu khách chưa được cấp riêng.
-            # Nếu nghiệp vụ của bạn yêu cầu tất cả voucher phải được phân phối
-            # trước, hãy đổi get_or_create thành kiểm tra tồn tại.
-            user_voucher = UserVoucher.objects.filter(
-                user=request.user,
-                voucher=voucher,
-            ).first()
-
-            if user_voucher is None:
-                raise ValidationError(
-                    "Voucher này chưa được phân phối cho tài khoản của bạn."
-                )
-
-            if user_voucher.is_used:
-                existing_usage = VoucherUsage.objects.filter(
-                    user_voucher=user_voucher,
-                    order=order,
-                ).first()
-
-                if existing_usage is None:
-                    raise ValidationError(
-                        "Voucher đã được sử dụng cho đơn hàng khác."
-                    )
-
-                discount = _to_money(existing_usage.discount_amount)
-
-            # Đánh dấu paid bên trong transaction. Nếu redeem thất bại,
-            # ValidationError sẽ rollback cả thay đổi trạng thái.
-            try:
-                evaluate_redemption_request(
-                    request,
-                    user=request.user,
-                    voucher=voucher,
-                    order=order,
-                )
-            except VoucherFraudBlocked as exc:
-                return Response({"error": str(exc)}, status=429)
-
-            order.status = Order.STATUS_PAID
-            order.save(update_fields=["status"])
-
-            success, result = redeem_voucher(
-                request.user,
-                voucher,
+        try:
+            discount, assigned_vouchers = _complete_order_payment(
+                request,
                 order,
+                voucher,
             )
-
-            if not success:
-                raise ValidationError({"voucher": result})
-
-            discount = _to_money(result)
-
-        else:
-            order.status = Order.STATUS_PAID
-            order.discount_amount = ZERO_MONEY
-            order.save(update_fields=[
-                "status",
-                "discount_amount",
-            ])
+        except VoucherFraudBlocked as exc:
+            return Response({"error": str(exc)}, status=429)
 
         subtotal = _to_money(order.total_amount)
 
@@ -685,6 +678,7 @@ class ConfirmOrderAPIView(APIView):
             "message": "Đơn hàng đã được xác nhận thanh toán.",
             "order_id": order.id,
             "status": order.status,
+            "assigned_vouchers": assigned_vouchers,
             "receipt": {
                 "subtotal": str(subtotal),
                 "discount": str(discount),
@@ -713,6 +707,16 @@ class CreateVoucherAPIView(APIView):
         )
 
 
+class VoucherProductCatalogAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsStaffOrAdmin]
+
+    def get(self, request):
+        products = Product.objects.filter(is_active=True).values(
+            "id", "name", "product_type"
+        )
+        return Response(list(products))
+
+
 class VoucherDetailAPIView(APIView):
     permission_classes = [IsAuthenticated, IsStaffOrAdmin]
 
@@ -724,6 +728,7 @@ class VoucherDetailAPIView(APIView):
             rule = None
         data = {
             "id": voucher.id,
+            "campaign_id": voucher.campaign_id,
             "code": voucher.code,
             "title": voucher.title,
             "discount_type": voucher.discount_type,
@@ -742,6 +747,7 @@ class VoucherDetailAPIView(APIView):
                 "min_order_amount": rule.min_order_amount if rule and hasattr(rule, 'min_order_amount') else 0,
                 "min_items": rule.min_items if rule and hasattr(rule, 'min_items') else 0,
                 "required_product_type": rule.required_product_type if rule and hasattr(rule, 'required_product_type') else None,
+                "required_product_id": rule.required_product_id if rule else None,
                 "period_type": rule.period_type if rule and hasattr(rule, 'period_type') else None,
                 "lookback_days": rule.lookback_days if rule else 0,
                 "min_accumulated_spent": rule.min_accumulated_spent if rule else 0,
@@ -760,6 +766,7 @@ class VoucherDetailAPIView(APIView):
                 "min_order_amount": 0,
                 "min_items": 0,
                 "required_product_type": None,
+                "required_product_id": None,
                 "period_type": None,
                 "usage_limit_per_user": 1,
             }
@@ -965,6 +972,20 @@ class CreateAndDistributeVoucherAPIView(APIView):
         voucher = serializer.save()
         user_ids = getattr(voucher, "_distribution_user_ids", None)
 
+        if voucher.event_type == "order_success":
+            return Response(
+                {
+                    "message": "Voucher sẽ tự động được cấp sau khi đơn hàng thành công và khách đủ điều kiện tích lũy.",
+                    "voucher_id": voucher.id,
+                    "code": voucher.code,
+                    "release_date": voucher.release_date,
+                    "distributed_now": False,
+                    "assigned": 0,
+                    "already_assigned": 0,
+                },
+                status=201,
+            )
+
         plan = create_distribution_plan(voucher, user_ids=user_ids)
 
         if voucher.release_date <= timezone.now():
@@ -1036,16 +1057,10 @@ class ProcessOrderSuccessEventAPIView(APIView):
             return Response({"error": "User khong ton tai"}, status=404)
 
         items = data["items"]
-        normalized_items = []
-        for item in items:
-            normalized_items.append(
-                {
-                    "name": item.get("name"),
-                    "product_type": item.get("product_type"),
-                    "quantity": int(item.get("quantity", 0)),
-                    "unit_price": float(item.get("unit_price", 0)),
-                }
-            )
+        normalized_items = [
+            SimpleNamespace(**item)
+            for item in items
+        ]
 
         event_order = _EventOrder(total_amount=data["total_amount"], items=normalized_items)
 
@@ -1411,7 +1426,6 @@ class VoucherRecipientDeleteAPIView(APIView):
     @transaction.atomic
     def delete(self, request, voucher_id, user_id):
         uv = get_object_or_404(UserVoucher, voucher_id=voucher_id, user_id=user_id)
-        voucher = uv.voucher
         
         if uv.is_used:
             return Response(
