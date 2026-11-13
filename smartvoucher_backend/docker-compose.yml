@@ -1,106 +1,144 @@
+x-app-env: &app-env
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY}
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?Set DJANGO_ALLOWED_HOSTS}
+
+  CORS_ALLOW_ALL_ORIGINS: ${CORS_ALLOW_ALL_ORIGINS:-False}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+  CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-}
+
+  DB_ENGINE: ${DB_ENGINE:-django.db.backends.mysql}
+  DB_NAME: ${DB_NAME:?Set DB_NAME}
+  DB_USER: ${DB_USER:?Set DB_USER}
+  DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+  DB_HOST: db
+  DB_PORT: "3306"
+
+  CACHE_BACKEND: django.core.cache.backends.redis.RedisCache
+  CACHE_LOCATION: redis://redis:6379/1
+  CACHE_TIMEOUT: ${CACHE_TIMEOUT:-300}
+
+  EMAIL_HOST: ${EMAIL_HOST:-smtp.gmail.com}
+  EMAIL_PORT: ${EMAIL_PORT:-587}
+  EMAIL_USE_TLS: ${EMAIL_USE_TLS:-True}
+  EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+  EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+
+  PRODUCT_CATALOG_JSON: ${PRODUCT_CATALOG_JSON:?Set PRODUCT_CATALOG_JSON}
+
+  SMARTVOUCHER_ADMIN_USERNAME: ${SMARTVOUCHER_ADMIN_USERNAME:-}
+  SMARTVOUCHER_ADMIN_EMAIL: ${SMARTVOUCHER_ADMIN_EMAIL:-}
+  SMARTVOUCHER_ADMIN_PASSWORD: ${SMARTVOUCHER_ADMIN_PASSWORD:-}
+
+  VOUCHER_WEBHOOK_URL: ${VOUCHER_WEBHOOK_URL:-}
+  VOUCHER_WEBHOOK_TIMEOUT_SECONDS: ${VOUCHER_WEBHOOK_TIMEOUT_SECONDS:-5}
+
+
 services:
+
+  # Redis
   redis:
     image: redis:7-alpine
-    container_name: smartvoucher_redis
-    restart: always
+    restart: unless-stopped
+
     command: ["redis-server", "--appendonly", "yes"]
+
     volumes:
       - redis_data:/data
+
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 3s
-      retries: 20
+      retries: 10
 
+
+  # MySQL
   db:
     image: mysql:8.0
-    container_name: smartvoucher_mysql
-    restart: always
-
-    env_file:
-      - .env
+    restart: unless-stopped
 
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-
-    ports:
-      - "3307:3306"
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME:?Set DB_NAME}
+      MYSQL_USER: ${DB_USER:?Set DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
 
     volumes:
       - mysql_data:/var/lib/mysql
 
+    # Không publish cổng 3306 ra Internet
+
     healthcheck:
       test:
         [
-          "CMD",
-          "mysqladmin",
-          "ping",
-          "-h",
-          "localhost",
-          "-u",
-          "root",
-          "-p${DB_PASSWORD}"
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"
         ]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 20
+      start_period: 30s
 
 
+  # Django backend
   web:
     build: .
+    restart: unless-stopped
 
-    container_name: smartvoucher_django
-    restart: always
+    command:
+      [
+        "gunicorn",
+        "smartvoucher.wsgi:application",
+        "--bind",
+        "0.0.0.0:8000",
+        "--workers",
+        "2",
+        "--timeout",
+        "120",
+        "--access-logfile",
+        "-"
+      ]
 
-    command: >
-      sh -c "python manage.py migrate &&
-             python manage.py runserver 0.0.0.0:8000"
+    environment: *app-env
 
     volumes:
-      - .:/app
       - media_data:/app/media
+      - static_data:/app/staticfiles
 
-    ports:
-      - "8000:8000"
-
-    env_file:
-      - .env
-    environment:
-      CACHE_BACKEND: django.core.cache.backends.redis.RedisCache
-      CACHE_LOCATION: redis://redis:6379/1
+    expose:
+      - "8000"
 
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+
     healthcheck:
       test:
         [
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/vouchers/stats/overview/public/', timeout=2)"
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=3)"
         ]
-      interval: 10s
-      timeout: 3s
+      interval: 15s
+      timeout: 5s
       retries: 10
+      start_period: 30s
 
+
+  # Voucher scheduler
   scheduler:
     build: .
-    container_name: smartvoucher_scheduler
-    restart: always
-    command: >
-      sh -c "python manage.py migrate &&
-             python manage.py run_voucher_scheduler"
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    environment:
-      CACHE_BACKEND: django.core.cache.backends.redis.RedisCache
-      CACHE_LOCATION: redis://redis:6379/1
+    restart: unless-stopped
+
+    command: ["python", "manage.py", "run_voucher_scheduler"]
+
+    environment: *app-env
+
     depends_on:
       web:
         condition: service_healthy
@@ -108,7 +146,27 @@ services:
         condition: service_healthy
 
 
+  # React frontend + Nginx
+  frontend:
+    build:
+      context: ../smartvoucher_frontend
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    depends_on:
+      web:
+        condition: service_healthy
+
+    ports:
+      - "80:80"
+
+    volumes:
+      - media_data:/usr/share/nginx/html/media:ro
+
+
 volumes:
   mysql_data:
   redis_data:
   media_data:
+  static_data:
