@@ -12,12 +12,14 @@ def start_jobs():
 
     # 2. Thay vì dùng Decorator @, ní dùng hàm add_job trực tiếp như vầy:
     scheduler.add_job(
-        process_due_distribution_plans,   # Tên hàm (không có ngoặc đơn)
+        process_due_distribution_plans,
         trigger="interval",
         seconds=60,
         id="auto_distribute_voucher",
         max_instances=1,
-        replace_existing=True,            # Giờ thì nó sẽ không bị lỗi lặp tham số nữa
+        replace_existing=True,
+        coalesce=True,
+        misfire_grace_time=30,
     )
 
     # 3. Đăng ký sự kiện và bắt đầu
