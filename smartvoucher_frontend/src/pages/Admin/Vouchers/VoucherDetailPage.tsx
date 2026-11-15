@@ -802,7 +802,7 @@ export default function VoucherDetailPage() {
 
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <span className="text-sm font-medium text-slate-500">Tổng phát hành</span>
+                  <span className="text-sm font-medium text-slate-500">Hạn mức tổng lượt sử dụng</span>
                   <Badge variant="outline" className="font-mono">{voucher.quantity}</Badge>
                 </div>
                 <div className="flex justify-between items-center">
@@ -815,7 +815,7 @@ export default function VoucherDetailPage() {
                     style={{ width: `${Math.min(((voucher.used_count || 0) / Math.max(voucher.quantity, 1)) * 100, 100)}%` }}
                   />
                 </div>
-                <p className="text-xs text-right text-slate-400 font-medium">Còn lại: <span className="font-bold text-slate-600">{Math.max(voucher.quantity - (voucher.used_count || 0), 0)}</span></p>
+                <p className="text-xs text-right text-slate-400 font-medium">Lượt sử dụng còn lại: <span className="font-bold text-slate-600">{Math.max(voucher.quantity - (voucher.used_count || 0), 0)}</span></p>
               </div>
             </CardContent>
           </Card>

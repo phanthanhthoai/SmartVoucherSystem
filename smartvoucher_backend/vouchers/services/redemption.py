@@ -62,6 +62,7 @@ from django.utils import timezone
 from orders.models import Order
 from vouchers.models import Voucher, UserVoucher, VoucherUsage
 from vouchers.services.discount import calculate_discount_amount
+from vouchers.services.locks import voucher_redemption_lock
 from vouchers.services.rule_engine import is_voucher_eligible
 
 
@@ -106,6 +107,15 @@ def redeem_voucher(user, voucher, order):
     if locked_voucher is None:
         return _failure("Không tìm thấy voucher.")
 
+    with voucher_redemption_lock(locked_voucher.pk):
+        return _redeem_locked_voucher(
+            user=user,
+            voucher=locked_voucher,
+            order_id=order_id,
+        )
+
+
+def _redeem_locked_voucher(*, user, voucher, order_id):
     locked_order = (
         Order.objects.select_for_update()
         .filter(pk=order_id, user_id=user.pk)
@@ -115,14 +125,14 @@ def redeem_voucher(user, voucher, order):
     if locked_order is None:
         return _failure("Không tìm thấy đơn hàng của người dùng.")
 
-    if locked_order.applied_voucher_id != locked_voucher.pk:
+    if locked_order.applied_voucher_id != voucher.pk:
         return _failure("Voucher không khớp với đơn hàng.")
 
     user_voucher = (
         UserVoucher.objects.select_for_update()
         .filter(
             user_id=user.pk,
-            voucher_id=locked_voucher.pk,
+            voucher_id=voucher.pk,
         )
         .first()
     )
@@ -150,29 +160,29 @@ def redeem_voucher(user, voucher, order):
 
     now = timezone.now()
 
-    if not locked_voucher.is_active or locked_voucher.is_deleted:
+    if not voucher.is_active or voucher.is_deleted:
         return _failure("Voucher hiện không hoạt động.")
 
     if (
-        locked_voucher.release_date
-        and now < locked_voucher.release_date
+        voucher.release_date
+        and now < voucher.release_date
     ):
         return _failure("Voucher chưa đến thời gian phát hành.")
 
     if (
-        locked_voucher.expiry_date
-        and now > locked_voucher.expiry_date
+        voucher.expiry_date
+        and now > voucher.expiry_date
     ):
         return _failure("Voucher đã hết hạn.")
 
-    if locked_voucher.used_count >= locked_voucher.quantity:
+    if voucher.used_count >= voucher.quantity:
         return _failure("Voucher đã hết số lượng sử dụng.")
 
     # Rule Engine kiểm tra phân khúc, đơn hàng, thời gian và
     # lịch sử chi tiêu. Hàm này không thay đổi dữ liệu.
     eligible = is_voucher_eligible(
         user,
-        locked_voucher,
+        voucher,
         locked_order,
         Order,
     )
@@ -181,7 +191,7 @@ def redeem_voucher(user, voucher, order):
         return _failure("Đơn hàng hoặc người dùng không đủ điều kiện.")
 
     discount_amount = calculate_discount_amount(
-        locked_voucher,
+        voucher,
         locked_order,
     )
 
@@ -203,8 +213,8 @@ def redeem_voucher(user, voucher, order):
     user_voucher.used_at = now
     user_voucher.save(update_fields=["is_used", "used_at"])
 
-    locked_voucher.used_count += 1
-    locked_voucher.save(update_fields=["used_count"])
+    voucher.used_count += 1
+    voucher.save(update_fields=["used_count"])
 
     locked_order.discount_amount = discount_amount
     locked_order.save(update_fields=["discount_amount"])

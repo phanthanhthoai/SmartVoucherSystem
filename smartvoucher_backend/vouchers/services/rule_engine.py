@@ -330,6 +330,20 @@ def check_accumulated_condition(
     return True
 
 
+def is_campaign_eligible(voucher, now=None):
+    """Campaign status and schedule are part of voucher eligibility."""
+
+    if not voucher.campaign_id:
+        return True
+
+    campaign = voucher.campaign
+    now = now or get_current_datetime()
+    return (
+        campaign.status == "active"
+        and campaign.start_at <= now <= campaign.end_at
+    )
+
+
 def is_voucher_eligible(
     user,
     voucher,
@@ -344,6 +358,9 @@ def is_voucher_eligible(
     hạn dùng, tồn kho và quyền sở hữu voucher phải được kiểm tra ở
     service/use case áp dụng voucher tương ứng.
     """
+
+    if not is_campaign_eligible(voucher):
+        return False
 
     try:
         rule = voucher.rule

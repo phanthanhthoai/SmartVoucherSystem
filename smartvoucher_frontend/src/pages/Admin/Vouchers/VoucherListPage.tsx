@@ -189,7 +189,7 @@ export default function VoucherListPage() {
           'Chi tiêu tối thiểu': formatCurrency(v.min_spend),
           'Giảm tối đa': v.discount_type === 'percent' ? formatCurrency(v.max_discount) : 'N/A',
           'Đã dùng': `${v.usage_count} lượt`,
-          'Tổng lượt cấp': `${v.quantity} lượt`,
+          'Hạn mức tổng lượt sử dụng': `${v.quantity} lượt`,
           'Giới hạn/Người dùng': `${v.usage_limit_per_user} lần`,
           'Ngày bắt đầu': formatDate(v.release_date),
           'Ngày kết thúc': formatDate(v.expiry_date),
@@ -316,6 +316,14 @@ export default function VoucherListPage() {
     }
   };
 
+  const remainingUsesForDistribution = selectedVoucherForDist
+    ? Math.max(
+      Number(selectedVoucherForDist.quantity || 0) - Number(selectedVoucherForDist.used_count || 0),
+      0
+    )
+    : 0;
+  const selectedRecipientsExceedUses = selectedCustomers.length > remainingUsesForDistribution;
+
   useEffect(() => {
     fetchVouchers();
   }, [page, pageSize, debouncedSearch]);
@@ -372,7 +380,7 @@ export default function VoucherListPage() {
                     <TableHead className="min-w-[140px] font-bold text-slate-700 whitespace-nowrap">Mã Voucher</TableHead>
                     <TableHead className="min-w-[140px] font-bold text-slate-700 whitespace-nowrap">Trị giá Ưu đãi</TableHead>
                     <TableHead className="min-w-[180px] font-bold text-slate-700 whitespace-nowrap">Thời hạn</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700 whitespace-nowrap">Đã dùng / Tổng</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700 whitespace-nowrap">Đã dùng / Hạn mức lượt</TableHead>
                     <TableHead className="text-center font-bold text-slate-700 whitespace-nowrap min-w-[200px]">Trạng thái</TableHead>
                     <TableHead className="text-right pr-6 font-bold text-slate-700 whitespace-nowrap min-w-[140px]">Thao tác</TableHead>
                   </TableRow>
@@ -611,12 +619,34 @@ export default function VoucherListPage() {
               </DialogTitle>
               <DialogDescription className="text-indigo-100/90 font-medium text-sm md:text-base mt-3 flex flex-col gap-1.5 text-left">
                 <span>Chiến dịch: <strong className="text-white bg-white/20 px-2.5 py-0.5 rounded-md ml-1 font-mono tracking-wider">{selectedVoucherForDist?.code}</strong> &bull; <span className="text-white font-bold">{selectedVoucherForDist?.title}</span></span>
-                <span className="opacity-80">Vui lòng chọn các khách hàng mục tiêu bên dưới để tiến hành phân phối mã ưu đãi.</span>
+                <span className="opacity-80">Một mã chung sẽ được cấp vào ví của từng khách hàng được chọn.</span>
               </DialogDescription>
             </DialogHeader>
           </div>
 
           <div className="px-6 md:px-8 py-5 flex flex-col gap-4">
+            <div className="grid grid-cols-3 gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-center">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Tổng lượt tối đa</p>
+                <p className="mt-1 text-lg font-black text-indigo-800">{selectedVoucherForDist?.quantity ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Đã sử dụng</p>
+                <p className="mt-1 text-lg font-black text-slate-700">{selectedVoucherForDist?.used_count ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Còn lượt đổi</p>
+                <p className="mt-1 text-lg font-black text-emerald-700">{remainingUsesForDistribution}</p>
+              </div>
+            </div>
+            <p className="text-xs leading-relaxed text-slate-500">
+              Mỗi tài khoản nhận voucher trong ví và chỉ được dùng mã này 1 lần. Hạn mức lượt đổi là tổng của toàn chiến dịch, không phải số lượt mỗi người.
+            </p>
+            {selectedRecipientsExceedUses && (
+              <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+                Bạn đang chọn {selectedCustomers.length} người nhưng chỉ còn {remainingUsesForDistribution} lượt đổi. Tối đa {remainingUsesForDistribution} đơn có thể dùng mã; voucher hết lượt sẽ không áp dụng được.
+              </div>
+            )}
             {/* Auto-select banner */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/60">
               <div className="flex flex-col gap-0.5">
@@ -785,7 +815,7 @@ export default function VoucherListPage() {
                 <Users className="w-6 h-6 text-indigo-600" />
               </div>
               <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-tight">Đã chọn phân phối</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-tight">Người nhận được chọn</span>
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-2xl font-black text-indigo-700 leading-none">{selectedCustomers.length}</span>
                   <span className="text-[12px] font-bold text-indigo-500/80 mr-2">Khách hàng</span>

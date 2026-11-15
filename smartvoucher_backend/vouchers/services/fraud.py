@@ -59,6 +59,42 @@ def _is_rate_limited(voucher_id, ip_address, device_hash):
     return False
 
 
+def evaluate_voucher_code_attempt(request, *, user, code):
+    """Limit repeated code attempts, including unknown voucher codes."""
+
+    ip_address = get_client_ip(request)
+    device_hash = get_device_fingerprint_hash(request)
+    code_hash = hashlib.sha256(
+        (code or "").strip().casefold().encode("utf-8")
+    ).hexdigest()
+
+    keys = [f"voucher:attempt:user:{user.pk}"]
+    if ip_address:
+        keys.extend([
+            f"voucher:attempt:ip:{ip_address}",
+            f"voucher:attempt:ip-code:{ip_address}:{code_hash}",
+        ])
+    if device_hash:
+        keys.extend([
+            f"voucher:attempt:device:{device_hash}",
+            f"voucher:attempt:device-code:{device_hash}:{code_hash}",
+        ])
+
+    timeout = settings.VOUCHER_REDEMPTION_WINDOW_SECONDS
+    maximum = settings.VOUCHER_REDEMPTION_MAX_ATTEMPTS
+    if any(_increment_counter(key, timeout) > maximum for key in keys):
+        VoucherFraudEvent.objects.create(
+            user=user,
+            ip_address=ip_address,
+            device_fingerprint_hash=device_hash,
+            status=VoucherFraudEvent.STATUS_BLOCKED,
+            reason="rate_limit",
+        )
+        raise VoucherFraudBlocked(
+            "Yêu cầu sử dụng voucher bị chặn để bảo vệ chương trình khuyến mãi."
+        )
+
+
 def evaluate_redemption_request(request, *, user, voucher, order):
     """Rate-limit an attempt and detect many accounts sharing one device.
 

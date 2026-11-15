@@ -1,24 +1,61 @@
+from contextlib import contextmanager
 from datetime import timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from orders.models import Order, Product
-from vouchers.models import Voucher, VoucherRule, VoucherUsage, UserVoucher
+from vouchers.models import (
+    Campaign,
+    Voucher,
+    VoucherFraudEvent,
+    VoucherRule,
+    VoucherUsage,
+    UserVoucher,
+)
 from vouchers.serializers import VoucherRuleSerializer
+from vouchers.services.locks import VoucherRedemptionLockUnavailable
+from vouchers.services.redemption import redeem_voucher
 from vouchers.services.rule_engine import check_accumulated_condition
 from vouchers.views import (
+    ApplyVoucherAPIView,
     CheckoutAPIView,
     ConfirmOrderAPIView,
     VoucherProductCatalogAPIView,
 )
 
 
+@contextmanager
+def _test_voucher_redemption_lock(voucher_id):
+    yield
+
+
+@contextmanager
+def _unavailable_voucher_redemption_lock(voucher_id):
+    raise VoucherRedemptionLockUnavailable("Redis lock is unavailable.")
+    yield
+
+
+@override_settings(CACHES={
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "smartvoucher-checkout-tests",
+    }
+})
 class CheckoutTests(TestCase):
     def setUp(self):
+        cache.clear()
+        lock_patcher = patch(
+            "vouchers.services.redemption.voucher_redemption_lock",
+            _test_voucher_redemption_lock,
+        )
+        lock_patcher.start()
+        self.addCleanup(lock_patcher.stop)
         self.factory = APIRequestFactory()
         Product.objects.all().delete()
         Product.objects.update_or_create(
@@ -138,6 +175,168 @@ class CheckoutTests(TestCase):
             list(order.items.order_by("product_id").values_list("product_id", flat=True)),
             [1, 2],
         )
+
+    @override_settings(
+        VOUCHER_REDEMPTION_WINDOW_SECONDS=60,
+        VOUCHER_REDEMPTION_MAX_ATTEMPTS=5,
+    )
+    def test_apply_endpoint_rate_limits_repeated_code_attempts(self):
+        voucher = Voucher.objects.create(
+            title="Rate limited",
+            discount_type="fixed",
+            discount_value=Decimal("1000.00"),
+            release_date=timezone.now() - timedelta(days=1),
+            expiry_date=timezone.now() + timedelta(days=1),
+            quantity=10,
+        )
+        VoucherRule.objects.create(voucher=voucher)
+        UserVoucher.objects.create(user=self.user, voucher=voucher)
+        order = Order.objects.create(
+            user=self.user,
+            status=Order.STATUS_PENDING,
+            total_amount=Decimal("25000.00"),
+        )
+        order.items.create(
+            name="Test Candy",
+            product_id=1,
+            product_type="candy",
+            quantity=1,
+            unit_price=Decimal("25000.00"),
+        )
+
+        responses = []
+        for _ in range(6):
+            request = self.factory.post(
+                "/api/vouchers/apply/",
+                {
+                    "voucher_code": voucher.code,
+                    "order_id": order.id,
+                },
+                format="json",
+            )
+            force_authenticate(request, user=self.user)
+            responses.append(ApplyVoucherAPIView.as_view()(request))
+
+        self.assertEqual([response.status_code for response in responses[:5]], [200] * 5)
+        self.assertEqual(responses[5].status_code, 429)
+        self.assertTrue(
+            VoucherFraudEvent.objects.filter(
+                reason="rate_limit",
+                status=VoucherFraudEvent.STATUS_BLOCKED,
+            ).exists()
+        )
+
+    def test_checkout_rejects_voucher_outside_campaign_window(self):
+        now = timezone.now()
+        campaign = Campaign.objects.create(
+            name="Future sale",
+            start_at=now + timedelta(days=1),
+            end_at=now + timedelta(days=2),
+            status=Campaign.STATUS_ACTIVE,
+            created_by=self.user,
+        )
+        voucher = Voucher.objects.create(
+            campaign=campaign,
+            title="Future campaign voucher",
+            discount_type="fixed",
+            discount_value=Decimal("1000.00"),
+            release_date=now - timedelta(days=1),
+            expiry_date=now + timedelta(days=3),
+            quantity=10,
+        )
+        VoucherRule.objects.create(voucher=voucher)
+        UserVoucher.objects.create(user=self.user, voucher=voucher)
+        request = self.factory.post(
+            "/api/vouchers/checkout/",
+            {
+                "external_order_id": "future-campaign-voucher",
+                "items": [{"product_id": 1, "quantity": 1}],
+                "voucher_code": voucher.code,
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.user)
+
+        response = CheckoutAPIView.as_view()(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(
+            Order.objects.filter(
+                external_order_id="future-campaign-voucher"
+            ).exists()
+        )
+
+    def test_redeeming_same_order_twice_is_idempotent(self):
+        voucher = Voucher.objects.create(
+            title="Idempotent redemption",
+            discount_type="fixed",
+            discount_value=Decimal("1000.00"),
+            release_date=timezone.now() - timedelta(days=1),
+            expiry_date=timezone.now() + timedelta(days=1),
+            quantity=5,
+        )
+        VoucherRule.objects.create(voucher=voucher)
+        UserVoucher.objects.create(user=self.user, voucher=voucher)
+        order = Order.objects.create(
+            user=self.user,
+            status=Order.STATUS_PAID,
+            total_amount=Decimal("25000.00"),
+            applied_voucher=voucher,
+        )
+        order.items.create(
+            name="Test Candy",
+            product_id=1,
+            product_type="candy",
+            quantity=1,
+            unit_price=Decimal("25000.00"),
+        )
+
+        first_result = redeem_voucher(self.user, voucher, order)
+        second_result = redeem_voucher(self.user, voucher, order)
+
+        voucher.refresh_from_db()
+        self.assertEqual(first_result, (True, Decimal("1000.00")))
+        self.assertEqual(second_result, first_result)
+        self.assertEqual(voucher.used_count, 1)
+        self.assertEqual(VoucherUsage.objects.filter(order=order).count(), 1)
+
+    def test_checkout_fails_closed_when_redis_lock_is_unavailable(self):
+        voucher = Voucher.objects.create(
+            title="Redis lock required",
+            discount_type="fixed",
+            discount_value=Decimal("1000.00"),
+            release_date=timezone.now() - timedelta(days=1),
+            expiry_date=timezone.now() + timedelta(days=1),
+            quantity=5,
+        )
+        VoucherRule.objects.create(voucher=voucher)
+        UserVoucher.objects.create(user=self.user, voucher=voucher)
+        request = self.factory.post(
+            "/api/vouchers/checkout/",
+            {
+                "external_order_id": "redis-lock-unavailable",
+                "items": [{"product_id": 1, "quantity": 1}],
+                "voucher_code": voucher.code,
+            },
+            format="json",
+            REMOTE_ADDR="10.30.0.1",
+        )
+        force_authenticate(request, user=self.user)
+
+        with patch(
+            "vouchers.services.redemption.voucher_redemption_lock",
+            _unavailable_voucher_redemption_lock,
+        ):
+            response = CheckoutAPIView.as_view()(request)
+
+        voucher.refresh_from_db()
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(
+            Order.objects.filter(
+                external_order_id="redis-lock-unavailable"
+            ).exists()
+        )
+        self.assertEqual(voucher.used_count, 0)
 
     def test_checkout_marks_order_paid_without_admin_confirmation(self):
         request = self.factory.post(

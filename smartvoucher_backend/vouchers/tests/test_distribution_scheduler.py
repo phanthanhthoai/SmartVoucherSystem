@@ -6,6 +6,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from vouchers.models import (
+    Campaign,
     UserVoucher,
     Voucher,
     VoucherDistributionPlan,
@@ -67,3 +68,39 @@ class DistributionSchedulerTests(TestCase):
             plan.status,
             VoucherDistributionPlan.STATUS_SKIPPED_EXPIRED,
         )
+
+    def test_campaign_plan_waits_until_campaign_starts(self):
+        now = timezone.now()
+        campaign = Campaign.objects.create(
+            name="Scheduled campaign",
+            start_at=now + timedelta(hours=1),
+            end_at=now + timedelta(days=1),
+            status=Campaign.STATUS_ACTIVE,
+            created_by=self.user,
+        )
+        voucher = Voucher.objects.create(
+            campaign=campaign,
+            title="Campaign voucher",
+            discount_type="fixed",
+            discount_value=Decimal("1000.00"),
+            release_date=now - timedelta(minutes=2),
+            expiry_date=now + timedelta(days=2),
+            quantity=10,
+        )
+        VoucherRule.objects.create(voucher=voucher)
+        plan = VoucherDistributionPlan.objects.create(voucher=voucher)
+
+        process_due_distribution_plans()
+
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, VoucherDistributionPlan.STATUS_PENDING)
+        self.assertFalse(UserVoucher.objects.filter(user=self.user, voucher=voucher).exists())
+
+        campaign.start_at = now - timedelta(minutes=1)
+        campaign.save(update_fields=["start_at"])
+
+        process_due_distribution_plans()
+
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, VoucherDistributionPlan.STATUS_COMPLETED)
+        self.assertTrue(UserVoucher.objects.filter(user=self.user, voucher=voucher).exists())

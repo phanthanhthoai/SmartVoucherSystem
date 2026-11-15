@@ -134,6 +134,19 @@ def execute_distribution_plan(plan):
     voucher = plan.voucher
     now = timezone.now()
 
+    if voucher.campaign_id:
+        campaign = voucher.campaign
+        if now > campaign.end_at:
+            plan.status = VoucherDistributionPlan.STATUS_SKIPPED_EXPIRED
+            plan.distributed_at = now
+            plan.save(update_fields=["status", "distributed_at"])
+            return 0, 0, 0
+        if (
+            campaign.status != campaign.STATUS_ACTIVE
+            or now < campaign.start_at
+        ):
+            return 0, 0, 0
+
     if voucher.expiry_date <= now:
         plan.status = VoucherDistributionPlan.STATUS_SKIPPED_EXPIRED
         plan.distributed_at = now
@@ -159,7 +172,10 @@ def execute_distribution_plan(plan):
 
 def process_due_distribution_plans():
     now = timezone.now()
-    plans = VoucherDistributionPlan.objects.select_related("voucher").filter(
+    plans = VoucherDistributionPlan.objects.select_related(
+        "voucher",
+        "voucher__campaign",
+    ).filter(
         status=VoucherDistributionPlan.STATUS_PENDING,
         voucher__release_date__lte=now,
     ).filter(

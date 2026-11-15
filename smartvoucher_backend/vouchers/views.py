@@ -35,7 +35,12 @@ from vouchers.models import Voucher, UserVoucher, VoucherUsage
 from vouchers.services.discount import calculate_discount_amount
 from vouchers.services.rule_engine import is_voucher_eligible
 from vouchers.services.redemption import redeem_voucher
-from vouchers.services.fraud import VoucherFraudBlocked, evaluate_redemption_request
+from vouchers.services.fraud import (
+    VoucherFraudBlocked,
+    evaluate_redemption_request,
+    evaluate_voucher_code_attempt,
+)
+from vouchers.services.locks import VoucherRedemptionLockUnavailable
 
 from .models import UserVoucher, Voucher, VoucherEventLog, VoucherUsage
 from .serializers import (
@@ -342,6 +347,22 @@ class CheckoutAPIView(APIView):
                 "items": "Đơn hàng phải có ít nhất một sản phẩm."
             })
 
+        if voucher_code is not None:
+            if not isinstance(voucher_code, str):
+                raise ValidationError({
+                    "voucher_code": "Mã voucher không hợp lệ."
+                })
+            voucher_code = voucher_code.strip()
+            if voucher_code:
+                try:
+                    evaluate_voucher_code_attempt(
+                        request,
+                        user=user,
+                        code=voucher_code,
+                    )
+                except VoucherFraudBlocked as exc:
+                    return Response({"error": str(exc)}, status=429)
+
         if external_order_id:
             if Order.objects.filter(
                 external_order_id=external_order_id
@@ -475,6 +496,9 @@ class CheckoutAPIView(APIView):
         except VoucherFraudBlocked as exc:
             order.delete()
             return Response({"error": str(exc)}, status=429)
+        except VoucherRedemptionLockUnavailable as exc:
+            transaction.set_rollback(True)
+            return Response({"error": str(exc)}, status=503)
 
         final_total = max(subtotal - discount, ZERO_MONEY)
 
@@ -498,11 +522,12 @@ class ApplyVoucherAPIView(APIView):
     def post(self, request):
         code = request.data.get("voucher_code")
 
-        if not code:
+        if not isinstance(code, str) or not code.strip():
             return Response(
                 {"error": "voucher_code là bắt buộc."},
                 status=400,
             )
+        code = code.strip()
 
         # Helper hiện tại kiểm tra order_id/external_order_id,
         # quyền sở hữu đơn và trạng thái đã bị hủy.
@@ -510,6 +535,15 @@ class ApplyVoucherAPIView(APIView):
 
         if error_response:
             return error_response
+
+        try:
+            evaluate_voucher_code_attempt(
+                request,
+                user=request.user,
+                code=code,
+            )
+        except VoucherFraudBlocked as exc:
+            return Response({"error": str(exc)}, status=429)
 
         # Thứ tự khóa: Voucher -> Order.
         voucher = (
@@ -671,6 +705,9 @@ class ConfirmOrderAPIView(APIView):
             )
         except VoucherFraudBlocked as exc:
             return Response({"error": str(exc)}, status=429)
+        except VoucherRedemptionLockUnavailable as exc:
+            transaction.set_rollback(True)
+            return Response({"error": str(exc)}, status=503)
 
         subtotal = _to_money(order.total_amount)
 
@@ -990,6 +1027,20 @@ class CreateAndDistributeVoucherAPIView(APIView):
 
         if voucher.release_date <= timezone.now():
             created, skipped, eligible = execute_distribution_plan(plan)
+            plan.refresh_from_db()
+
+            if plan.status == plan.STATUS_PENDING:
+                return Response(
+                    {
+                        "message": "Voucher đã được lên lịch phân phối theo chiến dịch.",
+                        "voucher_id": voucher.id,
+                        "code": voucher.code,
+                        "release_date": voucher.release_date,
+                        "distributed_now": False,
+                        "plan_id": plan.id,
+                    },
+                    status=201,
+                )
 
             return Response(
                 {
@@ -1551,6 +1602,14 @@ def _get_voucher_status(voucher, now=None):
     if not now:
         from django.utils import timezone
         now = timezone.now()
+    if voucher.campaign_id:
+        campaign = voucher.campaign
+        if campaign.status != campaign.STATUS_ACTIVE:
+            return "paused"
+        if now < campaign.start_at:
+            return "scheduled"
+        if now > campaign.end_at:
+            return "expired"
     if voucher.used_count >= voucher.quantity and voucher.quantity > 0:
         return "exhausted"
     if voucher.expiry_date and voucher.expiry_date < now:

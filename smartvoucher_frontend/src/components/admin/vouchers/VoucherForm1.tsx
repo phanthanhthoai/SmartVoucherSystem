@@ -694,7 +694,7 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="font-semibold text-sm text-slate-700 pl-1">Số lượng phát hành</Label>
+                  <Label className="font-semibold text-sm text-slate-700 pl-1">Giới hạn lượt sử dụng toàn chiến dịch</Label>
                   <div className="relative">
                     <Controller
                       control={form.control}
@@ -714,8 +714,13 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
                         />
                       )}
                     />
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">Vé</div>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">lượt</div>
                   </div>
+                  <p className="text-xs leading-relaxed text-slate-500">
+                    Đây là hạn mức tổng của chiến dịch, không phải số mã riêng hay hạn mức của một người.
+                    Mỗi tài khoản chỉ dùng mã này tối đa 1 lần. Ví dụ: cấp cho 100 tài khoản và đặt 100 lượt
+                    thì tối đa 100 tài khoản có thể dùng, mỗi tài khoản 1 lần.
+                  </p>
                   <div className="min-h-[20px]">
                     {form.formState.errors.quantity && <p className="text-xs text-red-500 font-medium ml-1 mt-1">{form.formState.errors.quantity.message}</p>}
                   </div>
