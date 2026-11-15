@@ -39,7 +39,7 @@ def cap_discount(discount, eligible_amount, voucher):
     discount = min(to_money(discount), to_money(eligible_amount))
 
     max_discount = voucher.max_discount_amount
-    if max_discount is not None:
+    if max_discount is not None and to_money(max_discount) > ZERO:
         discount = min(discount, to_money(max_discount))
 
     return max(ZERO, to_money(discount))

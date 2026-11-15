@@ -405,17 +405,13 @@ class CheckoutAPIView(APIView):
                 raise ValidationError({
                     "items": f"Sản phẩm {product_id} không tồn tại hoặc đã ngừng kinh doanh."
                 })
-            name = product.name
-            product_type = product.product_type
+
             unit_price = product.unit_price
-
-            line_total = unit_price * quantity
-            subtotal += line_total
-
+            subtotal += unit_price * quantity
             prepared_items.append({
-                "name": name,
+                "name": product.name,
                 "product_id": product_id,
-                "product_type": product_type,
+                "product_type": product.product_type,
                 "quantity": quantity,
                 "unit_price": unit_price,
             })

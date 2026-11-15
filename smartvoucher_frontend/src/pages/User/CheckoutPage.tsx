@@ -91,22 +91,61 @@ export default function CheckoutPage() {
   }, [user, isVoucherModalOpen])
 
   const discountAmount = useMemo(() => {
-    if (!selectedVoucher) return 0;
+    if (!selectedVoucher) return 0
 
     const requiredType = selectedVoucher.product_type?.toLowerCase() === 'all'
       ? ''
       : selectedVoucher.product_type?.trim() ?? ''
-    const eligibleAmount = money(cartItems.reduce((total, item) => {
-      const matchesType = !requiredType || isProductTypeMatch(item.product_type, requiredType)
-      const matchesProduct = selectedVoucher.product_id === null
-        || selectedVoucher.product_id === undefined
-        || item.id === selectedVoucher.product_id
-      return matchesType && matchesProduct
-        ? total + item.price * item.quantity
-        : total
-    }, 0))
+    const eligibleItems = cartItems.filter((item) =>
+      (!requiredType || isProductTypeMatch(item.product_type, requiredType))
+      && (selectedVoucher.product_id == null || item.id === selectedVoucher.product_id)
+    )
+    const eligibleAmount = money(eligibleItems.reduce(
+      (total, item) => total + item.price * item.quantity,
+      0
+    ))
 
     if (eligibleAmount <= 0) return 0
+
+    const maxDiscountAmount = Number(selectedVoucher.max_discount_amount)
+    const hasMaximumDiscount = maxDiscountAmount > 0
+    const buyQuantity = Number(selectedVoucher.buy_quantity || 0)
+    const getQuantity = Number(selectedVoucher.get_quantity || 0)
+    if (buyQuantity > 0 && getQuantity > 0) {
+      const buyingCount = eligibleItems.reduce(
+        (total, item) => total + item.quantity,
+        0
+      )
+      const freeQuantity = Math.floor(buyingCount / buyQuantity) * getQuantity
+      if (freeQuantity <= 0) return 0
+
+      const getProductType = selectedVoucher.get_product_type?.trim() ?? ''
+      const rewardItems = cartItems
+        .filter((item) => !getProductType || isProductTypeMatch(item.product_type, getProductType))
+        .map((item) => ({
+          price: money(item.price),
+          quantity: Math.max(0, Math.trunc(item.quantity))
+        }))
+        .sort((left, right) => left.price - right.price)
+      const rewardTotal = money(rewardItems.reduce(
+        (total, item) => total + item.price * item.quantity,
+        0
+      ))
+      let remainingFreeQuantity = freeQuantity
+      let rewardDiscount = 0
+      for (const item of rewardItems) {
+        const discountedQuantity = Math.min(remainingFreeQuantity, item.quantity)
+        rewardDiscount += item.price * discountedQuantity
+        remainingFreeQuantity -= discountedQuantity
+        if (remainingFreeQuantity === 0) break
+      }
+      rewardDiscount = money(rewardDiscount)
+      const cappedRewardDiscount = hasMaximumDiscount
+        ? Math.min(rewardDiscount, maxDiscountAmount)
+        : rewardDiscount
+
+      return money(Math.min(cappedRewardDiscount, rewardTotal))
+    }
 
     const discountValue = Number(selectedVoucher.value)
     const calculatedDiscount = selectedVoucher.type.toLowerCase() === 'fixed'
@@ -114,14 +153,15 @@ export default function CheckoutPage() {
       : selectedVoucher.type.toLowerCase() === 'percent'
         ? eligibleAmount * discountValue / 100
         : 0
-    const cappedDiscount = selectedVoucher.max_discount_amount === null
-      || selectedVoucher.max_discount_amount === undefined
-      ? calculatedDiscount
-      : Math.min(calculatedDiscount, Number(selectedVoucher.max_discount_amount))
-    return money(Math.min(cappedDiscount, eligibleAmount))
-  }, [selectedVoucher, cartItems, cartTotal]);
+    const cappedDiscount = hasMaximumDiscount
+      ? Math.min(calculatedDiscount, maxDiscountAmount)
+      : calculatedDiscount
 
-  const finalTotal = cartTotal - discountAmount > 0 ? cartTotal - discountAmount : 0
+    return money(Math.min(cappedDiscount, eligibleAmount))
+  }, [selectedVoucher, cartItems])
+
+  const subtotalAmount = cartTotal
+  const finalTotal = Math.max(subtotalAmount - discountAmount, 0)
 
   // ✨ ĐÃ VÁ LỖ HỔNG: CHỌN VOUCHER (LỚP KHÓA 1) ✨
   const handleSelectVoucher = (voucher: WalletVoucher) => {
@@ -307,12 +347,17 @@ export default function CheckoutPage() {
               <div className="space-y-4 mb-6 text-sm font-semibold text-slate-400">
                 <div className="flex justify-between items-center">
                   <span>Tạm tính ({cartItems.length} món)</span>
-                  <span className="text-white">{formatCurrency(cartTotal)}</span>
+                  <span className="text-white">{formatCurrency(subtotalAmount)}</span>
                 </div>
                 <div className="flex justify-between items-center text-emerald-400">
                   <span>Giảm giá Voucher</span>
                   <span>- {formatCurrency(discountAmount)}</span>
                 </div>
+                {selectedVoucher && (
+                  <p className="text-xs text-slate-500">
+                    Số tiền tạm tính; backend sẽ kiểm tra lại khi đặt hàng.
+                  </p>
+                )}
               </div>
 
               <div className="flex justify-between items-end mb-8 pt-4 border-t border-white/10">
@@ -426,7 +471,13 @@ export default function CheckoutPage() {
                         {isSelected && <CheckCircle2 className="w-5 h-5 text-cyan-400" />}
                       </div>
                       <h4 className="font-bold text-white mb-1">
-                        {voucher.title || (voucher.type === 'percent' ? `Giảm ${voucher.value}%` : `Giảm ${formatCurrency(Number(voucher.value))}`)}
+                        {voucher.title || (
+                          voucher.buy_quantity && voucher.get_quantity
+                            ? `Mua ${voucher.buy_quantity} tặng ${voucher.get_quantity}`
+                            : voucher.type === 'percent'
+                              ? `Giảm ${voucher.value}%`
+                              : `Giảm ${formatCurrency(Number(voucher.value))}`
+                        )}
                       </h4>
                       <p className="text-xs text-slate-400 font-medium">
                         Đơn tối thiểu: {formatCurrency(minRequired)}

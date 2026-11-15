@@ -44,6 +44,9 @@ export type WalletVoucher = {
   max_discount_amount: number | string | null;
   min_spend: number | string;
   product_id: number | null;
+  buy_quantity?: number | null;
+  get_quantity?: number | null;
+  get_product_type?: string | null;
   is_used: boolean;
   start_date: string;
   expiry_date: string;

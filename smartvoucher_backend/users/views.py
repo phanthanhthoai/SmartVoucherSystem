@@ -55,6 +55,9 @@ class VoucherForUserAPI(APIView):
                 # 🚨 ĐÂY LÀ CHỖ ĐÃ FIX: Đi xuyên qua bảng Rule an toàn
                 "product_type": uv.voucher.rule.required_product_type if hasattr(uv.voucher, 'rule') else "All",
                 "product_id": uv.voucher.rule.required_product_id if hasattr(uv.voucher, 'rule') else None,
+                "buy_quantity": uv.voucher.rule.buy_quantity if hasattr(uv.voucher, 'rule') else None,
+                "get_quantity": uv.voucher.rule.get_quantity if hasattr(uv.voucher, 'rule') else None,
+                "get_product_type": uv.voucher.rule.get_product_type if hasattr(uv.voucher, 'rule') else None,
                 
                 "is_active": uv.voucher.is_active,
             }

@@ -96,6 +96,18 @@ class DiscountCalculatorTests(TestCase):
 
         self.assertEqual(discount, Decimal("15.00"))
 
+    def test_zero_max_discount_means_no_cap(self):
+        """Giá trị 0 từ ô giới hạn để trống không được triệt tiêu giảm giá."""
+        self.voucher.discount_value = Decimal("50.00")
+        self.voucher.max_discount_amount = Decimal("0.00")
+        self.voucher.save(
+            update_fields=["discount_value", "max_discount_amount"]
+        )
+
+        discount = calculate_discount_amount(self.voucher, self.order)
+
+        self.assertEqual(discount, Decimal("50.00"))
+
     def test_discount_only_applies_to_required_product_type(self):
         """Voucher chỉ áp dụng cho các sản phẩm thuộc loại beverage."""
         VoucherRule.objects.create(
