@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/select';
 import { ConfirmModal } from '@/components/layout/admin/confirmModal';
 import { API_BASE_URL, authFetch } from '@/services/apiService';
+import { useAuth } from '@/context/AuthContext';
 import { Trash2, UserPlus, ShieldCheck, Mail, UserCircle, Edit, ShieldAlert, Lock, Unlock } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -50,6 +51,7 @@ interface Staff {
 }
 
 export default function StaffListPage() {
+  const { user } = useAuth();
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
@@ -127,8 +129,8 @@ export default function StaffListPage() {
       toast.error('Vui lòng điền đầy đủ thông tin');
       return;
     }
-    if (addForm.password.length < 6) {
-      toast.error('Mật khẩu phải có ít nhất 6 ký tự');
+    if (addForm.password.length < 8) {
+      toast.error('Mật khẩu phải có ít nhất 8 ký tự');
       return;
     }
     if (addForm.password !== addForm.confirmPassword) {
@@ -138,7 +140,7 @@ export default function StaffListPage() {
     setAddLoading(true);
     try {
       // Step 1: Register user
-      const regRes = await fetch(`${API_BASE_URL}/users/staff-register/`, {
+      const regRes = await authFetch(`${API_BASE_URL}/users/staff-register/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(addForm),
@@ -244,13 +246,15 @@ export default function StaffListPage() {
             onExport={handleExport}
             isLoading={exportLoading}
           />
-          <Button 
-            onClick={() => setAddDialogOpen(true)}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200 rounded-xl px-5 h-11 transition-all font-semibold w-fit"
-          >
-            <UserPlus className="w-5 h-5 mr-1.5" />
-            Thêm Quản trị viên
-          </Button>
+          {user?.role === 'admin' && (
+            <Button
+              onClick={() => setAddDialogOpen(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200 rounded-xl px-5 h-11 transition-all font-semibold w-fit"
+            >
+              <UserPlus className="w-5 h-5 mr-1.5" />
+              Thêm nhân viên
+            </Button>
+          )}
         </div>
       </div>
 

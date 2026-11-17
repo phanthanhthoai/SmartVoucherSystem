@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { userApi, orderApi } from '@/services/apiService'
+import { userApi, orderApi, type WalletVoucher } from '@/services/apiService'
 import {
   ArrowLeft,
   MapPin,
@@ -18,25 +18,14 @@ import { useCart } from '@/context/CartContext'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 
-// 1. Cập nhật Type chuẩn khớp 100% với Backend
-export type WalletVoucher = {
-  id: number;
-  code: string;
-  title?: string;
-  type: string; // 'fixed' hoặc 'percent'
-  value: number;
-  max_discount_amount?: number;
-  min_spend?: number; 
-  is_used: boolean;
-  start_date: string;
-  expiry_date: string;
-  product_type: string;
-  is_active: boolean;
-};
-
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value)
 }
+
+const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+
+const isProductTypeMatch = (itemType: string, requiredType: string) =>
+  itemType.toLocaleLowerCase() === requiredType.toLocaleLowerCase()
 
 export default function CheckoutPage() {
   const { user } = useAuth()
@@ -78,7 +67,13 @@ export default function CheckoutPage() {
             safeArray = data.data.data
         }
 
-        const validVouchers = safeArray.filter((v: WalletVoucher) => v.is_active && !v.is_used)
+        const now = Date.now()
+        const validVouchers = safeArray.filter((voucher) =>
+          voucher.is_active
+          && !voucher.is_used
+          && new Date(voucher.start_date).getTime() <= now
+          && new Date(voucher.expiry_date).getTime() >= now
+        )
         setMyVouchers(validVouchers)
         
       } catch (error) {
@@ -95,58 +90,98 @@ export default function CheckoutPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isVoucherModalOpen])
 
-  // Logic Tính toán Tiền Đã Được Cập Nhật Giống Backend
   const discountAmount = useMemo(() => {
-    if (!selectedVoucher) return 0;
+    if (!selectedVoucher) return 0
 
-    // 1. Tính tổng tiền của các món HỢP LỆ (giống eligible_amount ở Backend)
-    let eligibleAmount = 0;
-    if (selectedVoucher.product_type && selectedVoucher.product_type.toLowerCase() !== 'all') {
-      eligibleAmount = cartItems.reduce((total, item) => {
-        // Chỉ cộng tiền những món có product_type khớp với voucher
-        if (item.product_type === selectedVoucher.product_type) {
-          return total + (item.price * item.quantity);
-        }
-        return total;
-      }, 0);
-    } else {
-      // Nếu mã áp dụng cho tất cả
-      eligibleAmount = cartTotal;
-    }
+    const requiredType = selectedVoucher.product_type?.toLowerCase() === 'all'
+      ? ''
+      : selectedVoucher.product_type?.trim() ?? ''
+    const eligibleItems = cartItems.filter((item) =>
+      (!requiredType || isProductTypeMatch(item.product_type, requiredType))
+      && (selectedVoucher.product_id == null || item.id === selectedVoucher.product_id)
+    )
+    const eligibleAmount = money(eligibleItems.reduce(
+      (total, item) => total + item.price * item.quantity,
+      0
+    ))
 
-    // 2. Bắt đầu tính tiền giảm dựa trên eligibleAmount
-    if (selectedVoucher.type.toLowerCase() === 'fixed') {
-      return Math.min(selectedVoucher.value, eligibleAmount);
-    }
-    
-    if (selectedVoucher.type.toLowerCase() === 'percent') {
-      let calc = (eligibleAmount * selectedVoucher.value) / 100;
-      if (selectedVoucher.max_discount_amount && calc > selectedVoucher.max_discount_amount) {
-        return selectedVoucher.max_discount_amount;
+    if (eligibleAmount <= 0) return 0
+
+    const maxDiscountAmount = Number(selectedVoucher.max_discount_amount)
+    const hasMaximumDiscount = maxDiscountAmount > 0
+    const buyQuantity = Number(selectedVoucher.buy_quantity || 0)
+    const getQuantity = Number(selectedVoucher.get_quantity || 0)
+    if (buyQuantity > 0 && getQuantity > 0) {
+      const buyingCount = eligibleItems.reduce(
+        (total, item) => total + item.quantity,
+        0
+      )
+      const freeQuantity = Math.floor(buyingCount / buyQuantity) * getQuantity
+      if (freeQuantity <= 0) return 0
+
+      const getProductType = selectedVoucher.get_product_type?.trim() ?? ''
+      const rewardItems = cartItems
+        .filter((item) => !getProductType || isProductTypeMatch(item.product_type, getProductType))
+        .map((item) => ({
+          price: money(item.price),
+          quantity: Math.max(0, Math.trunc(item.quantity))
+        }))
+        .sort((left, right) => left.price - right.price)
+      const rewardTotal = money(rewardItems.reduce(
+        (total, item) => total + item.price * item.quantity,
+        0
+      ))
+      let remainingFreeQuantity = freeQuantity
+      let rewardDiscount = 0
+      for (const item of rewardItems) {
+        const discountedQuantity = Math.min(remainingFreeQuantity, item.quantity)
+        rewardDiscount += item.price * discountedQuantity
+        remainingFreeQuantity -= discountedQuantity
+        if (remainingFreeQuantity === 0) break
       }
-      return calc;
-    }
-    
-    return 0;
-  }, [selectedVoucher, cartItems, cartTotal]);
+      rewardDiscount = money(rewardDiscount)
+      const cappedRewardDiscount = hasMaximumDiscount
+        ? Math.min(rewardDiscount, maxDiscountAmount)
+        : rewardDiscount
 
-  const finalTotal = cartTotal - discountAmount > 0 ? cartTotal - discountAmount : 0
+      return money(Math.min(cappedRewardDiscount, rewardTotal))
+    }
+
+    const discountValue = Number(selectedVoucher.value)
+    const calculatedDiscount = selectedVoucher.type.toLowerCase() === 'fixed'
+      ? Math.min(discountValue, eligibleAmount)
+      : selectedVoucher.type.toLowerCase() === 'percent'
+        ? eligibleAmount * discountValue / 100
+        : 0
+    const cappedDiscount = hasMaximumDiscount
+      ? Math.min(calculatedDiscount, maxDiscountAmount)
+      : calculatedDiscount
+
+    return money(Math.min(cappedDiscount, eligibleAmount))
+  }, [selectedVoucher, cartItems])
+
+  const subtotalAmount = cartTotal
+  const finalTotal = Math.max(subtotalAmount - discountAmount, 0)
 
   // ✨ ĐÃ VÁ LỖ HỔNG: CHỌN VOUCHER (LỚP KHÓA 1) ✨
   const handleSelectVoucher = (voucher: WalletVoucher) => {
-    const minRequired = voucher.min_spend || 0
-    if (cartTotal < minRequired) {
-      toast.error(`Đơn hàng chưa đạt mức tối thiểu ${formatCurrency(minRequired)}`)
+    const minRequired = Number(voucher.min_spend || 0)
+    if (cartTotal < Number(minRequired)) {
+      toast.error(`Đơn hàng chưa đạt mức tối thiểu ${formatCurrency(Number(minRequired))}`)
       return
     }
 
     // Kiểm tra xem trong giỏ hàng có món đồ nào khớp loại yêu cầu không
-    if (voucher.product_type && voucher.product_type.toLowerCase() !== 'all') {
-      const hasRequiredType = cartItems.some(item => item.product_type === voucher.product_type);
-      if (!hasRequiredType) {
-        toast.error(`Mã giảm giá này chỉ áp dụng cho sản phẩm loại: ${voucher.product_type}`);
-        return;
-      }
+    const requiredType = voucher.product_type?.toLowerCase() === 'all' ? '' : voucher.product_type?.trim() ?? ''
+    const hasEligibleProduct = cartItems.some((item) =>
+      (!requiredType || isProductTypeMatch(item.product_type, requiredType))
+      && (voucher.product_id == null || item.id === voucher.product_id)
+    )
+    if (!hasEligibleProduct) {
+      toast.error(voucher.product_id != null
+        ? `Giỏ hàng cần có sản phẩm #${voucher.product_id} để dùng mã này.`
+        : `Mã giảm giá này chỉ áp dụng cho danh mục: ${voucher.product_type}`)
+      return
     }
 
     setSelectedVoucher(voucher)
@@ -164,23 +199,25 @@ export default function CheckoutPage() {
     try {
       const orderPayload = {
         external_order_id: `ORD-${Date.now()}`, 
-        user_id: user?.id,
-        status: "pending",
         total_amount: cartTotal,
         items: cartItems.map(item => ({
-          name: item.name,
-          product_type: item.product_type, // "food" hoặc "beverage" để Backend check Voucher
+          product_id: item.id,
           quantity: item.quantity,
-          unit_price: item.price
         })),
         voucher_code: selectedVoucher ? selectedVoucher.code : null 
       };
   
       const response = await orderApi.placeOrderWithVoucher(orderPayload);
   
-      toast.success(`Đặt hàng thành công! Mã đơn: ${response.external_order_id}`);
+      toast.success(`Thanh toán thành công. Mã đơn: ${response.external_order_id}`);
       clearCart();
-      navigate('/shop/success'); 
+      navigate('/shop/success', {
+        state: {
+          orderId: response.order_id,
+          externalOrderId: response.external_order_id,
+          receipt: response.receipt,
+        },
+      });
   
     } catch (error: any) {
       console.error("Lỗi đặt hàng chi tiết:", error.response?.data);
@@ -310,12 +347,17 @@ export default function CheckoutPage() {
               <div className="space-y-4 mb-6 text-sm font-semibold text-slate-400">
                 <div className="flex justify-between items-center">
                   <span>Tạm tính ({cartItems.length} món)</span>
-                  <span className="text-white">{formatCurrency(cartTotal)}</span>
+                  <span className="text-white">{formatCurrency(subtotalAmount)}</span>
                 </div>
                 <div className="flex justify-between items-center text-emerald-400">
                   <span>Giảm giá Voucher</span>
                   <span>- {formatCurrency(discountAmount)}</span>
                 </div>
+                {selectedVoucher && (
+                  <p className="text-xs text-slate-500">
+                    Số tiền tạm tính; backend sẽ kiểm tra lại khi đặt hàng.
+                  </p>
+                )}
               </div>
 
               <div className="flex justify-between items-end mb-8 pt-4 border-t border-white/10">
@@ -335,7 +377,7 @@ export default function CheckoutPage() {
                 {isProcessing ? (
                   <div className="w-6 h-6 border-4 border-slate-900 border-t-transparent rounded-full animate-spin" />
                 ) : (
-                  'Hoàn Tất Đặt Hàng'
+                  'Xác nhận thanh toán'
                 )}
               </Button>
             </div>
@@ -382,14 +424,15 @@ export default function CheckoutPage() {
                 )}
 
                 {!isLoadingVouchers && myVouchers.map((voucher) => {
-                  const minRequired = voucher.min_spend || 0
+                  const minRequired = Number(voucher.min_spend || 0)
                   
-                  // ✨ ĐÃ VÁ LỖ HỔNG: HIỂN THỊ UI XÁM XỊT (LỚP KHÓA 2) ✨
-                  let hasRequiredType = true;
-                  if (voucher.product_type && voucher.product_type.toLowerCase() !== 'all') {
-                    // Quét xem giỏ hàng có món nào khớp loại không
-                    hasRequiredType = cartItems.some(item => item.product_type === voucher.product_type);
-                  }
+                  const requiredType = voucher.product_type?.toLowerCase() === 'all'
+                    ? ''
+                    : voucher.product_type?.trim() ?? ''
+                  const hasRequiredType = cartItems.some((item) =>
+                    (!requiredType || isProductTypeMatch(item.product_type, requiredType))
+                    && (voucher.product_id == null || item.id === voucher.product_id)
+                  )
 
                   // Đạt điều kiện = Đủ tiền + CÓ món đồ khớp loại
                   const isEligible = (cartTotal >= minRequired) && hasRequiredType;
@@ -412,7 +455,9 @@ export default function CheckoutPage() {
                           } else {
                             // Cố tình bấm vào sẽ bị chửi vỗ mặt
                             if (!hasRequiredType) {
-                              toast.error(`Mã này chỉ áp dụng cho loại: ${voucher.product_type}`);
+                              toast.error(voucher.product_id != null
+                                ? `Mã này chỉ áp dụng cho sản phẩm #${voucher.product_id}.`
+                                : `Mã này chỉ áp dụng cho danh mục: ${voucher.product_type}`);
                             } else {
                               toast.error(`Đơn hàng chưa đạt mức tối thiểu ${formatCurrency(minRequired)}`);
                             }
@@ -426,13 +471,21 @@ export default function CheckoutPage() {
                         {isSelected && <CheckCircle2 className="w-5 h-5 text-cyan-400" />}
                       </div>
                       <h4 className="font-bold text-white mb-1">
-                        {voucher.title || (voucher.type === 'percent' ? `Giảm ${voucher.value}%` : `Giảm ${formatCurrency(voucher.value)}`)}
+                        {voucher.title || (
+                          voucher.buy_quantity && voucher.get_quantity
+                            ? `Mua ${voucher.buy_quantity} tặng ${voucher.get_quantity}`
+                            : voucher.type === 'percent'
+                              ? `Giảm ${voucher.value}%`
+                              : `Giảm ${formatCurrency(Number(voucher.value))}`
+                        )}
                       </h4>
                       <p className="text-xs text-slate-400 font-medium">
                         Đơn tối thiểu: {formatCurrency(minRequired)}
                       </p>
                       <p className="text-xs text-slate-400 font-medium mt-0.5">
-                        Áp dụng: <span className="text-cyan-400">{voucher.product_type || "All"}</span>
+                        Áp dụng: <span className="text-cyan-400">{voucher.product_id != null
+                          ? `Sản phẩm #${voucher.product_id}`
+                          : requiredType || "Tất cả sản phẩm"}</span>
                       </p>
                       <div className="absolute top-1/2 -left-2 -translate-y-1/2 w-4 h-4 bg-[#020617] rounded-full border-r border-white/10" />
                       <div className="absolute top-1/2 -right-2 -translate-y-1/2 w-4 h-4 bg-[#020617] rounded-full border-l border-white/10" />

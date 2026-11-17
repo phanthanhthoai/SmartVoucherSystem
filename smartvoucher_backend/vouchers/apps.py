@@ -7,7 +7,9 @@ class VouchersConfig(AppConfig):
     name = 'vouchers'
 
     def ready(self):
-        # CHỈ CHẠY khi đây là tiến trình chính (tránh chạy 2 lần do autoreload)
-        if os.environ.get('RUN_MAIN') == 'true':
+        # Local autoreload child or the single production web worker.
+        # The production flag is enabled only for Gunicorn, not migrations.
+        if (os.environ.get('RUN_MAIN') == 'true'
+                or os.environ.get('ENABLE_VOUCHER_SCHEDULER') == 'true'):
             from . import scheduler
             scheduler.start_jobs()

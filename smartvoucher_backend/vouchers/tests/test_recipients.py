@@ -5,8 +5,8 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from .models import UserVoucher, Voucher
-from .views import VoucherDetailAPIView, VoucherRecipientListAPIView
+from vouchers.models import UserVoucher, Voucher
+from vouchers.views import VoucherDetailAPIView, VoucherRecipientListAPIView
 
 
 class VoucherRecipientTests(TestCase):
@@ -16,14 +16,14 @@ class VoucherRecipientTests(TestCase):
         self.staff_user = self.User.objects.create_user(
             username="staff1",
             email="staff@example.com",
-            password="password123",
+            password="Strong-password-123!",
             role="staff",
             is_staff=True,
         )
         self.customer_user = self.User.objects.create_user(
             username="customer1",
             email="customer@example.com",
-            password="password123",
+            password="Strong-password-123!",
             role="customer",
         )
         self.voucher = Voucher.objects.create(
@@ -104,7 +104,8 @@ class VoucherRecipientTests(TestCase):
         response = VoucherDetailAPIView.as_view()(request, voucher_id=voucher.id)
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(Voucher.objects.filter(id=voucher.id).exists())
+        voucher.refresh_from_db()
+        self.assertTrue(voucher.is_deleted)
 
     def test_staff_cannot_delete_released_voucher(self):
         request = self.factory.delete(f"/api/vouchers/{self.voucher.id}/")

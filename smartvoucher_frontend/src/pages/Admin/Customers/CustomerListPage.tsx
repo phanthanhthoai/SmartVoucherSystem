@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/dialog';
 import { ConfirmModal } from '@/components/layout/admin/confirmModal';
 import { API_BASE_URL, authFetch } from '@/services/apiService';
-import { Calendar, Clock, Edit, Eye, History, Lock, Mail, PauseCircle, Phone, PlayCircle, Plus, RefreshCw, Search, ShieldCheck, Star, Trash2, UserCircle, UserPlus, Users, Wallet } from 'lucide-react';
+import { Calendar, ClipboardList, Clock, Edit, Eye, History, Lock, Mail, PauseCircle, Phone, PlayCircle, Plus, RefreshCw, Search, ShieldCheck, Star, Trash2, UserCircle, UserPlus, Users, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
@@ -26,8 +26,8 @@ import { ExportDropdown } from '@/components/admin/common/ExportDropdown';
 import { exportToExcel, exportToCSV } from '@/utils/downloadUtils';
 import { formatDateInVietnam, formatDateTimeInVietnam } from '@/utils/dateTime';
 
-const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
+const formatCurrency = (value: number | string) => {
+  return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(Number(value));
 };
 
 interface Customer {
@@ -38,7 +38,8 @@ interface Customer {
   role: string;
   is_active: boolean;
   points: number;
-  total_spent: number;
+  total_spent: string;
+  paid_order_count: number;
   date_joined: string;
   last_login: string | null;
 }
@@ -76,8 +77,7 @@ export default function CustomerListPage() {
     phone: '',
     password: '',
     confirmPassword: '',
-    points: 0,
-    total_spent: 0
+    points: 0
   });
 
   const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
@@ -96,16 +96,15 @@ export default function CustomerListPage() {
       errors.email = 'Email không đúng định dạng hợp lệ';
     }
     if (formMode === 'create') {
-      if (!formData.password || formData.password.length < 6) {
-        errors.password = 'Mật khẩu phải từ 6 ký tự trở lên';
+      if (!formData.password || formData.password.length < 8) {
+        errors.password = 'Mật khẩu phải từ 8 ký tự trở lên';
       }
       if (formData.password !== formData.confirmPassword) {
         errors.confirmPassword = 'Mật khẩu xác nhận không khớp';
       }
     }
     if (formMode === 'edit') {
-      if (formData.points < 0) errors.points = 'Điểm tích lũy không được âm';
-      if (formData.total_spent < 0) errors.total_spent = 'Tổng chi tiêu không được âm';
+      if (formData.points < 0) errors.points = 'Điểm thưởng không được âm';
     }
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -158,8 +157,9 @@ export default function CustomerListPage() {
           'Email': c.email,
           'Số điện thoại': c.phone || 'N/A',
           'Vai trò': c.role === 'customer' ? 'Khách hàng' : c.role,
-          'Điểm tích lũy': `${c.points} điểm`,
-          'Tổng chi tiêu': formatCurrency(c.total_spent || 0),
+          'Điểm thưởng': `${c.points} điểm`,
+          'Chi tiêu đã thanh toán': formatCurrency(c.total_spent || 0),
+          'Số đơn đã thanh toán': c.paid_order_count,
           'Trạng thái': c.is_active ? 'Đang hoạt động' : 'Tạm khóa',
           'Lần cuối đăng nhập': c.last_login ? formatDateTimeInVietnam(c.last_login) : 'Chưa từng',
           'Ngày tham gia': formatDateTimeInVietnam(c.date_joined),
@@ -279,8 +279,7 @@ export default function CustomerListPage() {
       phone: c.phone || '',
       password: '',
       confirmPassword: '',
-      points: c.points,
-      total_spent: c.total_spent
+      points: c.points
     });
     setFormErrors({});
     setFormOpen(true);
@@ -295,8 +294,7 @@ export default function CustomerListPage() {
       phone: '',
       password: '',
       confirmPassword: '',
-      points: 0,
-      total_spent: 0
+      points: 0
     });
     setFormErrors({});
     setFormOpen(true);
@@ -343,7 +341,7 @@ export default function CustomerListPage() {
               <Users className="w-5 h-5 text-indigo-500" />
               Danh sách Khách hàng
             </h3>
-            <p className="text-sm text-slate-500 font-medium">Quản lý toàn bộ thông tin tài khoản và điểm tích lũy</p>
+            <p className="text-sm text-slate-500 font-medium">Chi tiêu và số đơn được tính từ đơn đã thanh toán; điều kiện từng voucher được xét riêng.</p>
           </div>
           <div className="flex items-center gap-4 w-full sm:w-auto mt-2 sm:mt-0">
             <div className="relative w-full sm:w-72">
@@ -376,8 +374,9 @@ export default function CustomerListPage() {
                 <TableHead className="font-black text-slate-600 pl-6 uppercase text-[12px] tracking-widest">Khách hàng</TableHead>
                 <TableHead className="font-black text-slate-600 uppercase text-[12px] tracking-widest">Email liên hệ</TableHead>
                 <TableHead className="font-black text-slate-600 uppercase text-[12px] tracking-widest">Số điện thoại</TableHead>
-                <TableHead className="font-black text-slate-600 uppercase text-[12px] tracking-widest text-right">Tích lũy</TableHead>
-                <TableHead className="font-black text-slate-600 uppercase text-[12px] tracking-widest text-right">Tổng chi tiêu</TableHead>
+                <TableHead className="font-black text-slate-600 uppercase text-[12px] tracking-widest text-right">Điểm thưởng</TableHead>
+                <TableHead className="font-black text-slate-600 uppercase text-[12px] tracking-widest text-right">Chi tiêu đã thanh toán</TableHead>
+                <TableHead className="font-black text-slate-600 uppercase text-[12px] tracking-widest text-right">Đơn đã thanh toán</TableHead>
                 <TableHead className="font-black text-slate-600 uppercase text-[12px] tracking-widest text-center">Trạng thái</TableHead>
                 <TableHead className="font-black text-slate-600 uppercase text-[12px] tracking-widest text-right pr-6">Thao tác</TableHead>
               </TableRow>
@@ -386,7 +385,7 @@ export default function CustomerListPage() {
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i} className="animate-pulse h-20 border-slate-50">
-                    <TableCell colSpan={7} className="bg-slate-50/10 h-20"></TableCell>
+                    <TableCell colSpan={8} className="bg-slate-50/10 h-20"></TableCell>
                   </TableRow>
                 ))
               ) : customers.length > 0 ? (
@@ -424,9 +423,13 @@ export default function CustomerListPage() {
                     <TableCell className="text-right">
                       <div className="inline-flex flex-col items-end">
                         <span className="font-black text-slate-800 text-base">
-                          {new Intl.NumberFormat('vi-VN').format(c.total_spent)}<span className="text-xs ml-1 text-slate-400 font-bold uppercase tracking-tighter">đ</span>
+                          {new Intl.NumberFormat('vi-VN').format(Number(c.total_spent))}<span className="text-xs ml-1 text-slate-400 font-bold uppercase tracking-tighter">đ</span>
                         </span>
+                        <span className="text-[10px] text-slate-400">sau giảm giá</span>
                       </div>
+                    </TableCell>
+                    <TableCell className="text-right font-bold text-slate-700">
+                      {c.paid_order_count.toLocaleString()}
                     </TableCell>
                     <TableCell className="text-center">
                       <Badge
@@ -494,7 +497,7 @@ export default function CustomerListPage() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-32">
+                  <TableCell colSpan={8} className="text-center py-32">
                     <Users className="w-16 h-16 text-slate-100 mx-auto mb-4" />
                     <p className="text-slate-400 font-bold italic text-sm uppercase tracking-widest">Không có dữ liệu phù hợp</p>
                   </TableCell>
@@ -651,7 +654,7 @@ export default function CustomerListPage() {
               {formMode === 'edit' && (
                 <>
                   <div className="space-y-2 col-span-1 md:col-span-1">
-                    <Label className="text-xs font-black uppercase text-slate-500 tracking-widest pl-1">Điểm tích lũy</Label>
+                    <Label className="text-xs font-black uppercase text-slate-500 tracking-widest pl-1">Điểm thưởng</Label>
                     <div className="relative group">
                       <Star className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-amber-500 group-focus-within:text-amber-500 transition-colors" />
                       <Input
@@ -665,21 +668,9 @@ export default function CustomerListPage() {
                     </div>
                     {formErrors.points && <p className="text-sm font-bold text-rose-500 animate-in slide-in-from-top-1 pl-2">{formErrors.points}</p>}
                   </div>
-                  <div className="space-y-2 col-span-1 md:col-span-1">
-                    <Label className="text-xs font-black uppercase text-slate-500 tracking-widest pl-1">Tổng chi (VNĐ)</Label>
-                    <div className="relative group">
-                      <Wallet className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-500 group-focus-within:text-emerald-500 transition-colors" />
-                      <Input
-                        type="number" className={cn(
-                          "h-14 bg-white border-2 rounded-2xl pl-14 pr-6 focus:ring-4 focus:ring-emerald-500/10 font-bold text-lg transition-all",
-                          formErrors.total_spent ? "border-rose-400 focus:border-rose-500 shadow-[0_0_15px_-3px_rgba(251,113,133,0.3)]" : "border-slate-200 hover:border-emerald-300 focus:border-emerald-500 shadow-sm"
-                        )}
-                        value={formData.total_spent}
-                        onChange={(e) => setFormData({ ...formData, total_spent: Number(e.target.value) })}
-                      />
-                    </div>
-                    {formErrors.total_spent && <p className="text-sm font-bold text-rose-500 animate-in slide-in-from-top-1 pl-2">{formErrors.total_spent}</p>}
-                  </div>
+                  <p className="col-span-full text-xs text-slate-500">
+                    Điểm thưởng được quản lý riêng; điều kiện tích lũy voucher tính từ chi tiêu sau giảm giá của các đơn đã thanh toán.
+                  </p>
                 </>
               )}
             </div>
@@ -728,19 +719,27 @@ export default function CustomerListPage() {
                   </p>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-4 md:gap-6">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:gap-6">
                 <div className="bg-slate-50 rounded-[1.5rem] md:rounded-[2rem] p-4 md:p-6 border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center">
-                  <span className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] block mb-2">Tích lũy</span>
+                  <span className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] block mb-2">Điểm thưởng</span>
                   <div className="flex items-center justify-center gap-1.5 md:gap-2 text-xl md:text-3xl font-black text-slate-800">
                     <Star className="w-5 h-5 md:w-6 md:h-6 text-amber-500 fill-amber-400 shrink-0" />
                     <span className="truncate">{detailCustomer ? detailCustomer.points.toLocaleString() : 0}</span>
                   </div>
                 </div>
                 <div className="bg-slate-50 rounded-[1.5rem] md:rounded-[2rem] p-4 md:p-6 border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center">
-                  <span className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] block mb-2">Chi tiêu</span>
+                  <span className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] block mb-2">Chi tiêu đã thanh toán</span>
                   <div className="flex items-center justify-center gap-1.5 md:gap-2 text-xl md:text-3xl font-black text-emerald-600">
                     <Wallet className="w-5 h-5 md:w-6 md:h-6 shrink-0" />
-                    <span className="truncate">{detailCustomer ? new Intl.NumberFormat('vi-VN').format(detailCustomer.total_spent) : 0}đ</span>
+                    <span className="truncate">{detailCustomer ? new Intl.NumberFormat('vi-VN').format(Number(detailCustomer.total_spent)) : 0}đ</span>
+                  </div>
+                  <span className="mt-1 text-[10px] text-slate-400">toàn thời gian, sau giảm giá</span>
+                </div>
+                <div className="bg-slate-50 rounded-[1.5rem] md:rounded-[2rem] p-4 md:p-6 border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center">
+                  <span className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] block mb-2">Đơn đã thanh toán</span>
+                  <div className="flex items-center justify-center gap-1.5 md:gap-2 text-xl md:text-3xl font-black text-indigo-600">
+                    <ClipboardList className="w-5 h-5 md:w-6 md:h-6 shrink-0" />
+                    <span className="truncate">{detailCustomer ? detailCustomer.paid_order_count.toLocaleString() : 0}</span>
                   </div>
                 </div>
               </div>

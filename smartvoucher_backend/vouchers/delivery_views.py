@@ -12,6 +12,8 @@ class VoucherDeliveryLogAPIView(APIView):
     permission_classes = [IsAuthenticated, IsStaffOrAdmin]
 
     def get(self, request, voucher_id):
+        if not Voucher.objects.filter(id=voucher_id, is_deleted=False).exists():
+            return Response({"error": "Voucher không tồn tại."}, status=404)
         logs = (
             VoucherDeliveryLog.objects
             .filter(voucher_id=voucher_id)
@@ -114,5 +116,4 @@ class SendVoucherToEmailAPIView(APIView):
                 "error": f"Đã phân phối voucher nhưng gửi email thất bại cho {email}",
                 "already_assigned": not created,
             }, status=500)
-
 

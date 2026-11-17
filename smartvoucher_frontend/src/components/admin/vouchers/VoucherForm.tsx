@@ -276,7 +276,9 @@ export default function VoucherForm({ initialData, isEdit = false }: VoucherForm
         title: data.title,
         discount_type: data.discount_type,
         discount_value: Number(data.discount_value),
-        max_discount_amount: data.discount_type === 'percent' ? Number(data.max_discount_amount) : null,
+        max_discount_amount: data.discount_type === 'percent' && Number(data.max_discount_amount) > 0
+          ? Number(data.max_discount_amount)
+          : null,
         quantity: Number(data.quantity),
         event_type: data.event_type,
         is_active: data.is_active,

@@ -45,4 +45,8 @@ def staff_user(username, email, password):
     return user, None
 
 def vouchers_for_user(user):
-    return UserVoucher.objects.filter(user=user).select_related("voucher")
+    return (
+        UserVoucher.objects.filter(user=user, voucher__is_deleted=False)
+        .select_related("voucher", "voucher__rule")
+        .order_by("-assigned_at")
+    )

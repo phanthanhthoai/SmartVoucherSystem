@@ -1,4 +1,6 @@
+import json
 import logging
+from urllib import error, request as urlrequest
 from django.conf import settings
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
@@ -58,6 +60,59 @@ def send_voucher_email(user, voucher):
             user=user,
             voucher=voucher,
             channel=VoucherDeliveryLog.CHANNEL_EMAIL,
+            status=VoucherDeliveryLog.STATUS_FAILED,
+            recipient=recipient,
+            error_message=str(exc),
+        )
+        return False
+
+
+def send_voucher_webhook(user, voucher):
+    """Notify an optional marketing webhook after a voucher is assigned."""
+    webhook_url = getattr(settings, "VOUCHER_WEBHOOK_URL", "")
+    if not webhook_url:
+        return False
+
+    payload = json.dumps({
+        "event": "voucher.assigned",
+        "user_id": user.id,
+        "email": user.email,
+        "voucher": {
+            "id": voucher.id,
+            "code": voucher.code,
+            "title": voucher.title,
+            "expiry_date": voucher.expiry_date.isoformat(),
+        },
+    }, default=str).encode("utf-8")
+    webhook_request = urlrequest.Request(
+        webhook_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    recipient = webhook_url[:255]
+
+    try:
+        with urlrequest.urlopen(
+            webhook_request,
+            timeout=getattr(settings, "VOUCHER_WEBHOOK_TIMEOUT_SECONDS", 5),
+        ) as response:
+            if 200 <= response.status < 300:
+                VoucherDeliveryLog.objects.create(
+                    user=user,
+                    voucher=voucher,
+                    channel=VoucherDeliveryLog.CHANNEL_WEBHOOK,
+                    status=VoucherDeliveryLog.STATUS_SENT,
+                    recipient=recipient,
+                )
+                return True
+            raise RuntimeError(f"Webhook returned HTTP {response.status}")
+    except (error.URLError, OSError, RuntimeError) as exc:
+        logger.warning("Voucher webhook delivery failed: %s", exc)
+        VoucherDeliveryLog.objects.create(
+            user=user,
+            voucher=voucher,
+            channel=VoucherDeliveryLog.CHANNEL_WEBHOOK,
             status=VoucherDeliveryLog.STATUS_FAILED,
             recipient=recipient,
             error_message=str(exc),

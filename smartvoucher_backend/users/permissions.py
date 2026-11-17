@@ -11,3 +11,15 @@ class IsStaffOrAdmin(BasePermission):
             and user.is_authenticated
             and (user.is_superuser or getattr(user, "role", None) in {"staff", "admin"})
         )
+
+
+class IsAdminRole(BasePermission):
+    message = "Chỉ quản trị viên mới có quyền thực hiện thao tác này."
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_superuser or getattr(user, "role", None) == "admin")
+        )
