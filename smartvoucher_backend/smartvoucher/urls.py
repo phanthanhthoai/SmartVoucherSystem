@@ -4,7 +4,7 @@ from django.urls import path, include
 from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from orders.views import ProductDetailAPIView, ProductListCreateAPIView
-from .health import health_check
+from .health import health
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -15,7 +15,7 @@ urlpatterns = [
     path("api/users/login/", TokenObtainPairView.as_view()),
     path("api/users/refresh/", TokenRefreshView.as_view()),
     path("api/users/", include("users.urls")),
-    path("health/", health_check, name="health_check"),
+    path("health/", health, name="health_check"),
 ]
 
 if settings.DEBUG:
