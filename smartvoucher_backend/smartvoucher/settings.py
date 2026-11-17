@@ -1,8 +1,6 @@
-import json
 import os
 from pathlib import Path
 from datetime import timedelta
-
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -35,24 +33,32 @@ def env_list(name, default=None):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 load_dotenv(BASE_DIR / ".env")
+IS_PRODUCTION = env("DJANGO_ENV", "development") == "production"
+
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = env("DJANGO_SECRET_KEY", "django-insecure-change-me-before-production")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-SECRET_KEY = env("DJANGO_SECRET_KEY", "")
-
-DEBUG = env_bool("DJANGO_DEBUG", True)
-
-if not SECRET_KEY:
-    if DEBUG:
-        SECRET_KEY = "django-insecure-local-development-only"
-    else:
-        raise ImproperlyConfigured(
-            "DJANGO_SECRET_KEY must be configured in production."
-        )
+DEBUG = not IS_PRODUCTION and env_bool("DJANGO_DEBUG", True)
 
 ALLOWED_HOSTS = env_list(
-    "DJANGO_ALLOWED_HOSTS",
-    ["127.0.0.1", "localhost"],
+    "DJANGO_ALLOWED_HOSTS", [] if IS_PRODUCTION else ["127.0.0.1", "localhost"]
 )
+SESSION_COOKIE_SECURE = IS_PRODUCTION
+CSRF_COOKIE_SECURE = IS_PRODUCTION
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
+
+if IS_PRODUCTION:
+    if not SECRET_KEY or SECRET_KEY in {
+        "django-insecure-change-me-before-production",
+        "replace-with-a-long-random-secret",
+    }:
+        raise ImproperlyConfigured("Set DJANGO_SECRET_KEY for production")
+    if not ALLOWED_HOSTS:
+        raise ImproperlyConfigured("Set DJANGO_ALLOWED_HOSTS for production")
+    # Only trust this header behind a proxy that overwrites it. Production
+    # Compose binds the backend port to loopback for the host reverse proxy.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
 # Application definition
@@ -91,28 +97,25 @@ MIDDLEWARE = [
 ]
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", False)
+CORS_ALLOW_ALL_ORIGINS = not IS_PRODUCTION and env_bool("CORS_ALLOW_ALL_ORIGINS", True)
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
-    [
+    [] if IS_PRODUCTION else [
         "http://127.0.0.1:3000",
         "http://localhost:3000",
         "http://127.0.0.1:5173",
         "http://localhost:5173",
     ],
 )
-CSRF_TRUSTED_ORIGINS = env_list(
-    "CSRF_TRUSTED_ORIGINS",
-    [],
-)       
+
 # Database Settings -> Đã sửa để đọc động từ file .env của bạn
 DATABASES = {
     'default': {
         'ENGINE': env('DB_ENGINE', 'django.db.backends.mysql'),
         'NAME': env('DB_NAME', 'smartvoucher'),
         'USER': env('DB_USER', 'root'),
-        'PASSWORD': env('DB_PASSWORD', ''),
-        'HOST': env('DB_HOST', 'db'),
+        'PASSWORD': env('DB_PASSWORD', '123456'),
+        'HOST': env('DB_HOST', 'db'),  # 'db' là tên container MySQL khi chạy Docker
         'PORT': env('DB_PORT', '3306'),
     }
 }
@@ -123,35 +126,6 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
-
-# Use a shared Redis cache by default so rate limits are consistent across workers.
-CACHES = {
-    "default": {
-        "BACKEND": env(
-            "CACHE_BACKEND",
-            "django.core.cache.backends.redis.RedisCache",
-        ),
-        "LOCATION": env("CACHE_LOCATION", "redis://127.0.0.1:6379/1"),
-        "TIMEOUT": int(env("CACHE_TIMEOUT", "300")),
-    }
-}
-
-# Anti-abuse limits for voucher redemption use the shared cache above.
-VOUCHER_REDEMPTION_WINDOW_SECONDS = int(
-    env("VOUCHER_REDEMPTION_WINDOW_SECONDS", "60")
-)
-VOUCHER_REDEMPTION_MAX_ATTEMPTS = int(
-    env("VOUCHER_REDEMPTION_MAX_ATTEMPTS", "5")
-)
-VOUCHER_MAX_USERS_PER_DEVICE = int(
-    env("VOUCHER_MAX_USERS_PER_DEVICE", "3")
-)
-VOUCHER_REDEMPTION_LOCK_TIMEOUT_SECONDS = int(
-    env("VOUCHER_REDEMPTION_LOCK_TIMEOUT_SECONDS", "120")
-)
-VOUCHER_REDEMPTION_LOCK_WAIT_SECONDS = int(
-    env("VOUCHER_REDEMPTION_LOCK_WAIT_SECONDS", "120")
-)
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=5),
@@ -168,17 +142,7 @@ EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", True)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
-
-# Optional endpoint used to notify a marketing/CRM system after a voucher is
-# assigned. Keep it empty unless the receiving endpoint is configured.
-VOUCHER_WEBHOOK_URL = env("VOUCHER_WEBHOOK_URL", "")
-VOUCHER_WEBHOOK_TIMEOUT_SECONDS = int(env("VOUCHER_WEBHOOK_TIMEOUT_SECONDS", "5"))
-
-# Test/development catalog fixture. Production deployments should populate this
-# from their trusted catalog integration rather than accept prices from clients.
-PRODUCT_CATALOG = json.loads(env("PRODUCT_CATALOG_JSON", "{}"))
-if not isinstance(PRODUCT_CATALOG, dict):
-    raise ValueError("PRODUCT_CATALOG_JSON must be a JSON object keyed by product ID.")
+EMAIL_TIMEOUT = 30
 
 ROOT_URLCONF = 'smartvoucher.urls'
 
@@ -212,30 +176,6 @@ TIME_ZONE = 'Asia/Ho_Chi_Minh'
 USE_I18N = True
 USE_TZ = False
 
-STATIC_URL = 'static/'
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-
-SECURE_PROXY_SSL_HEADER = (
-    "HTTP_X_FORWARDED_PROTO",
-    "https",
-)
-
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE = not DEBUG
-
-STATIC_URL = "/static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
-
-STORAGES = {
-    "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
-    },
-    "staticfiles": {
-        "BACKEND": (
-            "whitenoise.storage.CompressedManifestStaticFilesStorage"
-        ),
-    },
-}

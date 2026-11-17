@@ -1,22 +1,16 @@
-from django.db import connection
+from django.db import connection, DatabaseError
 from django.http import JsonResponse
+from django.views.decorators.http import require_GET
 
 
-def health_check(request):
+@require_GET
+def health(request):
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
-
-        return JsonResponse({
-            "status": "ok",
-            "database": "connected",
-        })
-
-    except Exception:
-        return JsonResponse(
-            {
-                "status": "error",
-                "database": "unavailable",
-            },
-            status=503,
-        )
+            cursor.fetchone()
+    except DatabaseError:
+        return JsonResponse({"status": "unavailable"}, status=503)
+    response = JsonResponse({"status": "ok"})
+    response["Cache-Control"] = "no-store"
+    return response
