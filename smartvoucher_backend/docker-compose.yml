@@ -20,7 +20,7 @@ services:
 
   backend:
     build:
-      context: ./smartvoucher_backend
+      context: ./
       dockerfile: Dockerfile
     image: smartvoucher-backend:local
     env_file: .env.backend
