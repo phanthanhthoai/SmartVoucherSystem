@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from datetime import timedelta
@@ -88,8 +89,8 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware', 
-    'django.middleware.common.CommonMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
+'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -120,6 +121,29 @@ DATABASES = {
     }
 }
 
+# Shared cache and locks used by voucher redemption and fraud checks.
+CACHES = {
+    "default": {
+        "BACKEND": env("CACHE_BACKEND", "django.core.cache.backends.redis.RedisCache"),
+        "LOCATION": env("CACHE_LOCATION", "redis://127.0.0.1:6379/1"),
+        "TIMEOUT": int(env("CACHE_TIMEOUT", "300")),
+    }
+}
+
+VOUCHER_REDEMPTION_WINDOW_SECONDS = int(env("VOUCHER_REDEMPTION_WINDOW_SECONDS", "60"))
+VOUCHER_REDEMPTION_MAX_ATTEMPTS = int(env("VOUCHER_REDEMPTION_MAX_ATTEMPTS", "5"))
+VOUCHER_MAX_USERS_PER_DEVICE = int(env("VOUCHER_MAX_USERS_PER_DEVICE", "3"))
+VOUCHER_REDEMPTION_LOCK_TIMEOUT_SECONDS = int(env("VOUCHER_REDEMPTION_LOCK_TIMEOUT_SECONDS", "120"))
+VOUCHER_REDEMPTION_LOCK_WAIT_SECONDS = int(env("VOUCHER_REDEMPTION_LOCK_WAIT_SECONDS", "120"))
+
+# Used by the initial product-catalog data migration. Empty means no seed data.
+try:
+    PRODUCT_CATALOG = json.loads(env("PRODUCT_CATALOG_JSON", "{}"))
+except json.JSONDecodeError as exc:
+    raise ImproperlyConfigured("PRODUCT_CATALOG_JSON must contain valid JSON") from exc
+if not isinstance(PRODUCT_CATALOG, dict):
+    raise ImproperlyConfigured("PRODUCT_CATALOG_JSON must be a JSON object")
+
 # REST Framework & JWT Settings
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -147,7 +171,7 @@ EMAIL_TIMEOUT = 30
 ROOT_URLCONF = 'smartvoucher.urls'
 
 TEMPLATES = [
-    {
+{
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
         'DIRS': [],
         'APP_DIRS': True,
@@ -178,4 +202,6 @@ USE_TZ = False
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
